@@ -1,0 +1,66 @@
+-- For blink_spawn
+alias blinkshot = object.object[0]
+alias blinkshot = player.object[0]
+
+-- For killed_blink.number[0]
+alias delay = object.number[0]
+
+function blinkshot()
+    for each object with label "blink_spawn" do
+        alias blink_spawn = current_object
+
+        inline: if blink_spawn.blinkshot == no_object then
+            blink_spawn.blinkshot = blink_spawn.place_at_me(monitor, "blinkshot", none, 0, 0, 0, none)
+            blink_spawn.blinkshot.set_scale(150)
+            blink_spawn.blinkshot.set_waypoint_priority(low)
+            blink_spawn.blinkshot.set_waypoint_visibility(everyone)
+            blink_spawn.blinkshot.set_waypoint_range(0, 100)
+        end
+    end
+
+    for each object with label "blinkshot" do
+        alias blinkshot = current_object
+        blinkshot.shields = 0
+        blinkshot.health = 1
+    end
+
+    for each player do
+        alias c_player = current_player
+        alias killed_blink = allocate global.object
+        killed_blink = c_player.object[0]
+
+        inline: if killed_blink != no_object then
+            alias c_weapon = allocate global.object
+            c_weapon = c_player.get_weapon(primary)
+
+            inline: if c_weapon.is_of_type(flag) then
+                killed_blink.delete()
+            end
+
+            c_player.biped.attach_to(killed_blink, 0, 0, 0, relative)
+            c_player.biped.shields = 0
+
+            killed_blink.delay += 1
+            inline: if killed_blink.delay >= 40 then
+                c_player.biped.detach()
+                killed_blink.delete()
+            end
+        end
+    end
+end
+
+on object death: do
+    -- If a blink was killed.
+    inline: if killed_object.has_forge_label("blinkshot") then
+        -- If the killer was a player.
+        inline: if killer_player != no_player then
+            alias c_vehicle = allocate global.object
+            c_vehicle = killer_player.get_vehicle()
+
+            -- If the player didn't had a vehicle.
+            inline: if c_vehicle == no_object then
+                killer_player.blinkshot = killed_object.place_at_me(hill_marker, none, none, 0, 0, 0, none)
+            end
+        end
+    end
+end
