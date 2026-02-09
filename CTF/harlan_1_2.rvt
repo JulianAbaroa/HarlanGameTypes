@@ -1,0 +1,1385 @@
+-- Credits to Weesee, Rabid and obviously the MCC Gametypers community.
+
+-- Capture the Flag gametype uses:
+
+-- global.number[0-4]
+-- global.object[0-1]
+-- global.player[0-1]
+-- global.team[0]
+-- player.number[0-1]
+-- player.timer[0-2]
+-- team.object[0-1]
+
+-- Declarations
+
+declare global.object[2] with network priority low
+alias logic_controller = global.object[2]
+
+declare global.number[5] with network priority low
+alias current_calculated_scale = global.number[5]
+
+declare global.number[6] with network priority low
+alias recursion_counter = global.number[6]
+
+-- Prob this can be allocated and not global declaration.
+declare global.number[7] with network priority low
+alias global_math_buffer = global.number[7]
+
+-- QoL teleports.
+declare global.number[8] with network priority low
+alias c_round = global.number[8]
+
+-- Declarations
+
+
+
+
+-- Scale system
+
+-- Properties of the Object being scaled
+-- scale_result: Store the final % (e.g., 100, 200, 50) before applying it.
+alias scale_result = object.number[0]
+
+-- math_remainder: Stores division residues for high-precision simulations.
+alias math_remainder = object.number[1]
+
+-- scale_system: Define which formula to use (0=Nothing, 1=lineal, 2=x10, 3=high_precision).
+-- This is read from the controller object (logic_controller).
+alias scale_system = object.number[0]
+
+enum scale_mode
+    nothing = 0
+    lineal = 1
+    x10 = 2
+    high_precision = 3
+end
+
+function initialize_logic_controller()
+    for each object do
+        if logic_controller == no_object then
+            logic_controller = current_object
+        end
+    end 
+    
+    logic_controller = logic_controller.place_at_me(flag_stand, "logic_controller", none, 0, 0, 127, none)
+
+    alias scale_mode_option = script_option[6]
+    if scale_mode_option == scale_mode.nothing then
+        logic_controller.scale_system = scale_mode.nothing
+    
+    altif scale_mode_option == scale_mode.lineal then
+        logic_controller.scale_system = scale_mode.lineal
+
+    altif scale_mode_option == scale_mode.x10 then
+        logic_controller.scale_system = scale_mode.x10
+
+    altif scale_mode_option == scale_mode.high_precision then
+        logic_controller.scale_system = scale_mode.high_precision
+    end
+end
+
+function math_precision_calculator()
+    alias subject = current_object
+
+    -- We increment the recursion counter to avoid infinite loops.
+    recursion_counter += 1
+
+    -- Start of the mathematical smoothing algorithm:
+    -- It takes the current size and saves it in the waste buffer.
+    subject.math_remainder = subject.scale_result
+
+    -- Divide the remainder by 33 (simulate 3%).
+    subject.math_remainder /= 33
+
+    -- It takes the current size, passes it to the global buffer and divides it by 228 (simulating 0.4%).
+    global_math_buffer = subject.scale_result
+    global_math_buffer /= 228
+
+    -- Add both fractional results to the total size.
+    -- This creates compound growth with each iteration.
+    subject.scale_result += subject.math_remainder
+    subject.scale_result += global_math_buffer
+
+    -- If the recursion counter has not yet reached the limit defined in current_calculated_scale...
+    if recursion_counter < current_calculated_scale then
+        -- ...it calls itself to continue calculating.
+        math_precision_calculator()
+    end
+end
+
+function limit_checker()
+    alias subject = current_object
+
+    -- If the spawn_sequence is exactly -10, force minimum scale.
+    if subject.spawn_sequence == -10 then
+        current_calculated_scale = 1
+    end
+end
+
+function scaling_system()
+    if logic_controller == no_object then
+        initialize_logic_controller()
+    end
+    
+    for each object with label "scale" do
+        alias subject = current_object
+
+        -- We initialize the current scale with the value of the Spawn Sequence.
+        current_calculated_scale = subject.spawn_sequence
+
+        -- Mode 0: Lineal
+        if logic_controller.scale_system == scale_mode.lineal then
+            -- If the spawn sequence is negative (e.g., -15), apply the expansion formula.
+            if subject.spawn_sequence < -10 then
+                -- Formula: (x + 101) * 2
+                current_calculated_scale += 101
+                current_calculated_scale *= 2
+
+                -- Fine adjustments according to specific negative ranges:
+                if subject.spawn_sequence > -71 then
+                    current_calculated_scale *= 2
+                end
+
+                if subject.spawn_sequence > -41 then
+                    -- Equivalent to multiplying by 1.5
+                    current_calculated_scale *= 3
+                    current_calculated_scale /= 2 
+                end
+            end
+
+            -- Final conversion to base percentage: (x * 10) + 100
+            current_calculated_scale *= 10
+            current_calculated_scale += 100
+
+            -- Offset settings for large negative values
+            if subject.spawn_sequence < -10 then
+                current_calculated_scale += 1000
+
+                if subject.spawn_sequence > -71 then
+                    current_calculated_scale += -600
+                end
+
+                if subject.spawn_sequence > -41 then
+                    current_calculated_scale += -1200
+                end
+            end
+
+            -- Check if we fell into the forbidden value (-10)
+            limit_checker()
+        end
+
+        -- Mode 1: x10 Multiplier
+        if logic_controller.scale_system == scale_mode.x10 then
+            current_calculated_scale *= 10
+
+            if subject.spawn_sequence < -10 then
+                current_calculated_scale *= 2
+
+                if subject.spawn_sequence > -81 then
+                    current_calculated_scale += 800
+                end
+            end
+
+            if subject.spawn_sequence < -80 then
+                current_calculated_scale *= 2
+                current_calculated_scale += -800
+            end
+
+            current_calculated_scale += 100
+            limit_checker()
+        end
+
+        -- Mode 3: High Precision
+        if logic_controller.scale_system == scale_mode.high_precision then
+            -- Initial base of 100%
+            subject.scale_result = 100
+            current_calculated_scale = subject.spawn_sequence
+
+            -- If it is negative, we apply a multiplier of x5
+            if subject.spawn_sequence < 0 then
+                current_calculated_scale *= 5
+                subject.scale_result += current_calculated_scale
+
+                -- Special case: Spawn Sequence -20 strength scales to 1%
+                if subject.spawn_sequence == -20 then
+                    subject.scale_result = 1
+                end
+
+                -- Special calculation for values ​​less than -20
+                if subject.spawn_sequence < -20 then
+                    current_calculated_scale = 100
+                    current_calculated_scale += subject.spawn_sequence
+                    current_calculated_scale += 101
+                end
+            end
+
+            -- If it is outside the safe range (-20 to 0), we activate recursion.
+            if subject.spawn_sequence < -20 or subject.spawn_sequence > 0 then
+                subject.scale_result = 100
+                
+                -- Reset global counter
+                recursion_counter = 0
+
+                math_precision_calculator()
+            end
+
+            -- We assign the final calculated result to the current value
+            current_calculated_scale = subject.scale_result
+        end
+
+        -- We save the final calculation in the object's memory for future reference.
+        subject.scale_result = current_calculated_scale
+
+        -- We performed the actual resizing in the game engine.
+        subject.set_scale(current_calculated_scale)
+
+        -- We copy rotation on itself to force the physics update.
+        subject.copy_rotation_from(subject, false)
+    end
+end
+
+-- Scale system
+
+
+
+
+
+-- QoL
+
+alias spawn_announced = object.number[1] --number[0] of falcons is already used by push teleports!
+
+enum map_areas
+    nothing = 0
+    middle = 1
+    valley = 2
+    hangar = 3
+    sea_red = 4
+    sea_blue = 5
+    red_base = 6
+    blue_base = 7
+    centre_island = 8
+    up = 9
+    down = 10
+    bottom = 11
+end
+
+function qol_falcon()
+    -- For each falcon do
+    for each object with label 1 do
+        alias c_falcon = current_object
+
+        inline: if c_falcon.spawn_announced == 0 then
+            c_falcon.spawn_announced = 1
+
+            inline: if c_falcon.spawn_sequence == map_areas.middle then
+                game.show_message_to(all_players, none, "Falcon spawned in Middle")
+                
+            inline: altif c_falcon.spawn_sequence == map_areas.valley then
+                game.show_message_to(all_players, none, "Falcon spawned in Valley")   
+
+            inline: altif c_falcon.spawn_sequence == map_areas.hangar then
+                game.show_message_to(all_players, none, "Falcon spawned in Hangar")  
+                    
+            inline: altif c_falcon.spawn_sequence == map_areas.sea_red then
+                game.show_message_to(all_players, none, "Falcon spawned in Sea Red")   
+
+            inline: altif c_falcon.spawn_sequence == map_areas.sea_blue then
+                game.show_message_to(all_players, none, "Falcon spawned in Sea Blue")
+
+            inline: altif c_falcon.spawn_sequence == map_areas.red_base then
+                game.show_message_to(all_players, none, "Falcon spawned in Red Base")
+
+            inline: altif c_falcon.spawn_sequence == map_areas.blue_base then
+                game.show_message_to(all_players, none, "Falcon spawned in Blue Base")
+
+            inline: altif c_falcon.spawn_sequence == map_areas.centre_island then
+                game.show_message_to(all_players, none, "Falcon spawned in Island")
+            end
+        end
+    end
+end
+
+
+function qol_teleports()
+    c_round = game.current_round
+    c_round %= 2 -- Is round odd
+
+    for each object with label "teleporter" do
+        alias c_teleport = current_object
+
+        inline: if not c_teleport.is_of_type(capture_plate) and not c_teleport.is_of_type(hill_marker) then
+            -- Shape
+            c_teleport.set_shape_visibility(everyone)
+
+            -- Waypoint
+            c_teleport.set_waypoint_visibility(everyone)
+            c_teleport.set_waypoint_priority(low)
+            c_teleport.set_waypoint_range(0, 20)
+
+            inline: if c_teleport.spawn_sequence == map_areas.middle then
+                c_teleport.set_waypoint_text("Middle")
+
+            inline: altif c_teleport.spawn_sequence == map_areas.valley then
+                c_teleport.set_waypoint_text("Valley")
+            
+            inline: altif c_teleport.spawn_sequence == map_areas.hangar then
+                c_teleport.set_waypoint_text("Hangar")
+
+            inline: altif c_teleport.spawn_sequence == map_areas.sea_red then
+                if c_round == 0 then
+                    c_teleport.set_waypoint_text("Sea Red")
+                altif c_round != 0 then
+                    c_teleport.set_waypoint_text("Sea Blue")
+                end
+
+            inline: altif c_teleport.spawn_sequence == map_areas.sea_blue then
+                if c_round == 0 then
+                    c_teleport.set_waypoint_text("Sea Blue")
+                altif c_round != 0 then
+                    c_teleport.set_waypoint_text("Sea Red")
+                end
+
+            inline: altif c_teleport.spawn_sequence == map_areas.red_base then
+                inline: if c_round == 0 then
+                    c_teleport.set_waypoint_text("Red Base")
+                
+                inline: altif c_round != 0 then
+                    c_teleport.set_waypoint_text("Blue Base")
+                end
+
+            inline: altif c_teleport.spawn_sequence == map_areas.blue_base then
+                inline: if c_round == 0 then
+                    c_teleport.set_waypoint_text("Blue Base")
+
+                inline: altif c_round != 0 then
+                    c_teleport.set_waypoint_text("Red Base")
+                end
+
+            inline: altif c_teleport.spawn_sequence == map_areas.centre_island then
+                c_teleport.set_waypoint_text("Island")
+                
+            inline: altif c_teleport.spawn_sequence == map_areas.up then
+                c_teleport.set_waypoint_text("Up")
+            
+            inline: altif c_teleport.spawn_sequence == map_areas.down then
+                c_teleport.set_waypoint_text("Down")
+            
+            inline: altif c_teleport.spawn_sequence == map_areas.down then
+                c_teleport.set_waypoint_text("Bottom")
+            end
+        end
+    end
+end
+
+-- Qol
+
+
+
+
+
+-- Custom teleporters
+
+alias linked_teleport = object.object[0]
+alias saved_teleport = object.object[0]
+alias delay = object.number[0]
+
+function initialize_custom_teleport()
+    alias c_teleport = current_object
+
+    c_teleport.set_waypoint_range(0, 10)
+    c_teleport.set_waypoint_visibility(everyone)
+    c_teleport.set_waypoint_priority(low)   
+
+    inline: if c_teleport.is_of_type(hill_marker) then
+        c_teleport.set_waypoint_text("Sender")
+        c_teleport.set_shape_visibility(everyone)  
+                
+    inline: altif c_teleport.is_of_type(capture_plate) then
+        c_teleport.set_waypoint_text("Reciever")
+        c_teleport.set_shape_visibility(no_one)
+    end
+end
+
+function link_teleports()
+    for each object with label "teleporter" do
+        alias c_teleport = allocate global.object
+        c_teleport = current_object
+
+        inline: if c_teleport.spawn_sequence > 0 then
+            inline: if c_teleport.is_of_type(hill_marker) or c_teleport.is_of_type(capture_plate) then
+                for each object with label "teleporter" do
+                    alias temp_teleport = current_object
+    
+                    inline: if c_teleport.spawn_sequence > 0 then
+                        inline: if temp_teleport.is_of_type(hill_marker) or temp_teleport.is_of_type(capture_plate) then
+                            -- If these teleports are not the same one.
+                            inline: if c_teleport != temp_teleport then
+                                -- If these teleports have to link together.
+                                inline: if temp_teleport.spawn_sequence == c_teleport.spawn_sequence then
+                                    c_teleport.linked_teleport = temp_teleport
+                                    temp_teleport.linked_teleport = c_teleport
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+function custom_teleports()
+    link_teleports()
+
+    for each object with label "teleporter" do
+        alias c_teleport = current_object
+
+        inline: if c_teleport.spawn_sequence > 0 then
+            inline: if c_teleport.is_of_type(hill_marker) or c_teleport.is_of_type(capture_plate) then
+                initialize_custom_teleport()
+            end
+
+            -- If this teleport has a linked teleport.
+            inline: if c_teleport.linked_teleport != no_object then
+                -- Main logic
+                inline: if c_teleport.is_of_type(hill_marker) then
+                    for each player do
+                        alias c_player = current_player
+                        alias c_biped = allocate global.object
+                        c_biped = c_player.biped
+
+                        -- If a player has entered this custom teleport.
+                        inline: if c_teleport.shape_contains(c_biped) and c_biped.saved_teleport == no_object then
+                            alias c_weapon = allocate global.object
+                            c_weapon = c_player.get_weapon(primary)
+
+                            -- If this player has a flag.
+                            inline: if c_weapon.is_of_type(flag) then
+                                -- If the custom teleport and the flag are from the same team.
+                                inline: if c_teleport.team == c_weapon.team then
+                                    c_biped.attach_to(c_teleport.linked_teleport, 0, 0, 0, relative)
+                                    c_biped.saved_teleport = c_teleport.linked_teleport
+                                end
+
+                            -- If this player doesn't have a flag.
+                            inline: altif not c_weapon.is_of_type(flag) then
+                                c_biped.attach_to(c_teleport.linked_teleport, 0, 0, 0, relative)
+                                c_biped.saved_teleport = c_teleport.linked_teleport
+                            end
+                        end 
+
+                        --If this player has a saved teleport
+                        inline: if c_biped.saved_teleport != no_object then
+                            -- If this player is not inside the saved teleport's shape.
+                            inline: if not c_biped.saved_teleport.shape_contains(c_biped) then
+                                c_biped.saved_teleport = no_object
+                                c_biped.delay = 0
+                            end
+
+                            c_biped.delay += 1
+
+                            inline: if c_biped.delay == 50 then
+                                c_biped.detach()
+                                c_biped.delay = 0
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Custom teleporters
+
+
+
+
+
+-- Push telesporters
+
+-- For c_teleport.
+alias initialized = object.number[0]
+alias is_blocked = object.number[1]
+alias is_banned = object.number[2]
+
+-- For c_falcon.
+alias grace_timer = object.timer[0]
+
+function initialize_falcon()
+    alias c_falcon = current_object
+
+    c_falcon.is_blocked = 0
+    c_falcon.is_banned = 0
+    c_falcon.grace_timer = 0
+    c_falcon.grace_timer.set_rate(0%)
+end
+
+function push_teleports()
+    for each object with label "teleporter" do
+        alias c_teleport = current_object
+
+        inline: if c_teleport.spawn_sequence == -1 then
+            c_teleport.is_blocked = 0
+
+            c_teleport.set_shape(cylinder, 20, 15, 0)
+            c_teleport.set_waypoint_range(0, 20)
+            c_teleport.set_waypoint_text("Do not block!")
+        end
+    end
+
+    -- For each falcon do
+    for each object with label 1 do
+        alias c_falcon = allocate global.object
+        c_falcon = current_object
+
+        inline: if c_falcon.initialized == 0 then
+            c_falcon.initialized = 1
+            initialize_falcon()
+        end
+
+        alias is_blocking = allocate global.number
+        is_blocking = 0
+
+        for each object with label "teleporter" do
+            alias c_teleport = current_object
+
+            inline: if c_teleport.spawn_sequence == -1 and c_teleport.shape_contains(c_falcon) then
+                c_falcon.grace_timer.set_rate(100%)
+                c_teleport.is_blocked = 1
+                is_blocking = 1
+
+                inline: if c_falcon.grace_timer >= 15 or c_falcon.is_banned == 1 then
+                    c_falcon.apply_upward_impulse()
+                    c_falcon.is_banned = 1
+                end
+            end
+        end
+
+        inline: if is_blocking == 0 then
+            c_falcon.grace_timer.set_rate(0%)
+            c_falcon.grace_timer = 0
+        end
+    end
+
+    for each object with label "teleporter" do
+        alias c_teleport = current_object
+
+        inline: if c_teleport.spawn_sequence == -1 then
+            inline: if c_teleport.is_blocked == 1 then
+                c_teleport.set_shape_visibility(everyone)
+                c_teleport.set_waypoint_priority(blink)
+                c_teleport.set_waypoint_visibility(everyone)
+
+            inline: altif c_teleport.is_blocked == 0 then
+                c_teleport.set_shape_visibility(no_one)
+                c_teleport.set_waypoint_priority(normal)
+                c_teleport.set_waypoint_visibility(no_one)
+            end
+        end
+    end
+end
+
+-- Push telesporters
+
+
+
+
+
+-- Blinkshot
+
+-- For blink_spawn
+alias blinkshot = object.object[0]
+alias blinkshot = player.object[0]
+
+-- For killed_blink.number[0]
+alias delay = object.number[0]
+
+function blinkshot()
+    for each object with label "blink_spawn" do
+        alias blink_spawn = current_object
+
+        inline: if blink_spawn.blinkshot == no_object then
+            blink_spawn.blinkshot = blink_spawn.place_at_me(monitor, "blinkshot", none, 0, 0, 0, none)
+            blink_spawn.blinkshot.set_scale(150)
+            blink_spawn.blinkshot.set_waypoint_priority(low)
+            blink_spawn.blinkshot.set_waypoint_visibility(everyone)
+            blink_spawn.blinkshot.set_waypoint_range(0, 100)
+        end
+    end
+
+    for each object with label "blinkshot" do
+        alias blinkshot = current_object
+        blinkshot.shields = 0
+        blinkshot.health = 1
+    end
+
+    for each player do
+        alias c_player = current_player
+        alias killed_blink = allocate global.object
+        killed_blink = c_player.object[0]
+
+        inline: if killed_blink != no_object then
+            alias c_weapon = allocate global.object
+            c_weapon = c_player.get_weapon(primary)
+
+            inline: if c_weapon.is_of_type(flag) then
+                killed_blink.delete()
+            end
+
+            c_player.biped.attach_to(killed_blink, 0, 0, 0, relative)
+            c_player.biped.shields = 0
+
+            killed_blink.delay += 1
+            inline: if killed_blink.delay >= 40 then
+                c_player.biped.detach()
+                killed_blink.delete()
+            end
+        end
+    end
+end
+
+on object death: do
+    -- If a blink was killed.
+    inline: if killed_object.has_forge_label("blinkshot") then
+        -- If the killer was a player.
+        inline: if killer_player != no_player then
+            alias c_vehicle = allocate global.object
+            c_vehicle = killer_player.get_vehicle()
+
+            -- If the player didn't had a vehicle.
+            inline: if c_vehicle == no_object then
+                killer_player.blinkshot = killed_object.place_at_me(hill_marker, none, none, 0, 0, 0, none)
+            end
+        end
+    end
+end
+
+-- Blinkshot
+
+
+
+
+
+-- Betrayers handler
+
+alias betrayals = player.number[2]
+
+function betrayers()
+    for each player do
+        alias c_player = current_player
+
+        -- If the current player was killed by a teammate
+        inline: if c_player.killer_type_is(betrayal) then 
+            -- Save the betrayer on a global player
+            global.player[5] = c_player.try_get_killer()
+
+            inline: if c_player.betrayals < 3 then 
+                -- Increase the betrayals of the betrayer
+                global.player[5].betrayals += 1
+
+                -- If the betrayer betrayals is less than 4
+                inline: if global.player[5].betrayals < 4 then 
+                    game.show_message_to(all_players, none, "Teamkilling is not allowed, %n!", global.player[5])
+                end
+
+                inline: if global.player[5].betrayals >= 4 then 
+                    global.player[5].biped.set_waypoint_text("Betrayer")
+                    global.player[5].biped.set_waypoint_visibility(everyone)
+
+                    -- Warn all the players
+                    game.show_message_to(all_players, none, "%n has been penalized for teamkilling", global.player[5])
+                end
+            end
+        end
+
+        inline: if c_player.betrayals == 4 then 
+            -- Apply the punishment
+            c_player.apply_traits(script_traits[3])
+
+            c_player.biped.remove_weapon(primary, true)
+            c_player.biped.remove_weapon(secondary, true)
+            
+            c_player.frag_grenades = 0
+            c_player.plasma_grenades = 0
+        end
+    end
+end
+
+-- Betrayer handler
+
+
+
+
+
+-- Main.
+on init: do
+    qol_teleports()
+end
+
+do
+    scaling_system()
+    custom_teleports()
+    push_teleports()
+    qol_falcon()
+    blinkshot()
+    betrayers()
+end
+-- Main.
+
+
+
+
+
+-- Capture the flag
+
+declare global.number[0] with network priority local 
+alias is_flag_being_carried = global.number[0] -- Flag: determines wether the flag is being carried or not.
+
+declare global.number[1] with network priority local 
+alias is_sudden_death_started = global.number[1] -- Flag: determines wether the suddent death has started or not.
+
+declare global.number[2] with network priority low 
+alias is_player_inside_flag_hill_marker = global.number[2] -- Flag: determines wether a player is inside the flag's hill marker shape. (only used in one-sided flag)
+
+declare global.number[3] with network priority local
+alias is_ready = global.number[3] -- Flag: one for yes, zero for no.
+
+declare global.number[4] with network priority local
+alias temporal_number_reference = global.number[4]  -- Used as a temporal number reference.
+
+declare global.object[0] with network priority local 
+alias flag_or_biped_reference = global.object[0] -- Temporal reference to any team's flag or any player's biped.
+
+declare global.object[1] with network priority local
+alias temporal_object_reference = global.object[1] -- Temporal reference to some objects used here.
+
+declare global.player[0] with network priority local 
+alias flag_carrier_killer = global.player[0] -- The flag carrier killer.
+
+declare global.player[1] with network priority local 
+alias flag_carrier = global.player[1] -- The player who is carrying the flag.
+
+declare global.team[0] with network priority local
+alias current_team_flag_carrier = global.team[0] -- Defines what it's the current team that's carrying the flag.
+
+declare player.number[0] with network priority low -- Flag: Determines wether the player has been initialized (zero for no, one for yes)
+declare player.number[1] with network priority low -- Flag: Determines wether the player is recovering the flag (zero for no, one for yes)
+
+declare player.timer[1] = 1 -- Used to increse the flag carry time of the flag carrier.
+declare player.timer[2] = 5 -- Used to give time to load everything before the player is initialized.
+
+declare object.number[0] with network priority low -- Flag: Used to determine the current flag state (carried, not carried, dropped, etc)
+declare object.number[1] with network priority low = 1 -- This is unused, at least here.
+declare object.number[2] with network priority local -- Flag: determines wether the flag is grabbed or not.
+declare object.number[3] with network priority local -- Flag: Determines wether the flag dropped incident have been sented.
+
+declare object.object[0] with network priority low -- The flag's hill marker.
+
+declare object.player[0] with network priority low -- The flag carrier of the current flag.
+
+declare object.timer[0] = script_option[1] -- Flag reset timer.
+declare object.timer[1] = script_option[0] -- Flag return timer.
+
+declare object.timer[2] = 3 -- Timer to allow the dropped/grabbed flag incidents to be send.
+
+declare team.object[0] with network priority low -- This is the object reference to the team's flag stand. 
+declare team.object[1] with network priority low -- This is the object reference to the team's flag.
+
+on pregame: do
+   game.symmetry = 1
+   if script_option[2] == 1 then
+    game.symmetry = 0
+    end
+end 
+
+function show_loadouts()
+    if current_player.is_spartan() then 
+        current_player.set_loadout_palette(spartan_tier_1)
+    end
+
+    if current_player.is_elite() then 
+        current_player.set_loadout_palette(elite_tier_1)
+    end
+end
+
+function initialize_objectives()
+    if script_option[2] == 1 then -- If one-sided flag it's enabled.
+        if current_player.team == team[0] then -- If the player its from red team.
+            current_player.set_objective_text("Defend your flag.\r\n%n rounds.", game.round_limit) -- Shows the objective, and the rounds quantity.
+            current_player.set_objective_allegiance_name("Defense") -- Shows the current role of the player team.
+            current_player.set_objective_allegiance_icon(defend) -- Shows the defend icon.
+        altif current_player.team == team[1] then -- If the player its from blue team.
+            current_player.set_objective_text("Capture the enemy flag.\r\n%n rounds.", game.round_limit) -- Shows the objective, and the rounds quantity.
+            current_player.set_objective_allegiance_name("Offense") -- Shows the current role of the player team.
+            current_player.set_objective_allegiance_icon(attack) -- Shows the attack icon.
+        end
+    end
+
+    -- Updated objective text for multi/neutral flag with lead-to-win support.
+    if script_option[2] == 2 or script_option[2] == 0 then -- If multi or neutral flag its selected.
+        if game.score_to_win != 0 and script_option[5] > 0 then -- If score to win is set and lead-to-win is enabled.
+            current_player.set_objective_text("Capture the flag.\r\n%n point lead or %n points to win.", script_option[5], game.score_to_win)
+        altif game.score_to_win != 0 and script_option[5] == 0 then -- If only score to win is set.
+            current_player.set_objective_text("Capture the flag.\r\n%n points to win.", game.score_to_win)
+        altif game.score_to_win == 0 and script_option[5] > 0 then -- If only lead-to-win is set.
+            current_player.set_objective_text("Capture the flag.\r\n%n point lead to win.", script_option[5])
+        altif game.score_to_win == 0 and script_option[5] == 0 then -- If neither win condition is set.
+            current_player.set_objective_text("Capture the flag.")
+        end
+    end
+end
+
+function initialize_players()
+    -- Initialize players hud. 
+    script_widget[0].set_text("Your flag must be at home to score!")
+    script_widget[0].set_visibility(current_player, false)
+    current_player.biped.set_waypoint_icon(none)
+
+    -- Initialize players roles.
+    current_player.timer[2].set_rate(-100%) -- Decrese the timer to initialize the player.
+
+    if current_player.number[0] == 0 then -- If this player hasn't been initialized.
+        if current_player.timer[2].is_zero() then -- If the determined time has passed.
+            send_incident(ctf_game_start, current_player, no_player) -- Notify the game engine that the ctf has started for this player.
+            current_player.number[0] = 1 -- Flag: The player has been initialized.
+
+            if script_option[2] == 1 then -- If one-side flag its enabled.
+                if current_player.team == team[0] then -- If the player its from red team.
+                    send_incident(team_defense, current_player, no_player) -- Notify the game engine that this player is on the defense team.
+                altif current_player.team == team[1] then -- If the player its from blue team.
+                    send_incident(team_offense, current_player, no_player) -- Notify the game engine that this player is on the offense team.
+                end
+            end
+        end
+    end
+end
+
+function handle_cooldown_traits()
+    flag_or_biped_reference = current_player.biped
+    
+    if flag_or_biped_reference != no_object then -- If the biped is valid.
+        temporal_object_reference = no_object -- Cleaning.
+        temporal_object_reference = current_player.get_weapon(primary)
+            
+        if not temporal_object_reference.is_of_type(flag) then -- If the biped is not holding a flag.
+            if current_player.timer[0] > 0 then -- If the timer to apply cooldown traits is higher than zero.
+                current_player.timer[0].set_rate(-100%) -- Decrease the timer to zero.
+
+                if not current_player.timer[0].is_zero() then -- If the timer to apply cooldown traits is not zero.
+                    current_player.apply_traits(script_traits[1]) -- Apply cooldown traits.
+                end
+            end
+        end
+    end
+end
+
+function handle_players()
+    for each player do
+        if current_player.team != team[2] then
+            show_loadouts()
+        end
+
+        initialize_players()
+        initialize_objectives()
+        handle_cooldown_traits()
+    end
+end
+
+function set_flag_object()
+    current_team.object[1].set_waypoint_visibility(everyone) -- Sets the current flag waypoint visible to everyone.
+
+    if current_team.object[0] == no_object then -- If this team doesn't have referenced a flag.
+        for each object with label "ctf_flag_return" do -- Foreach flag stand.
+            if current_object.team == current_team then -- If the current object team is equal to the current team.
+                current_team.object[0] = current_object -- The referenced team flag is the current object.
+                current_object.set_waypoint_visibility(allies) -- Shows its waypoint only to the allies players.
+                current_object.set_waypoint_icon(diamond) -- Defines the waypoint icon to diamond.
+            end
+        end
+    end
+end
+
+function handle_modes()
+    if current_team == neutral_team or current_team.has_any_players() then
+        if current_team.object[1] == no_object then -- If this team doesn't have a flag.
+            if current_team.object[0] != no_object then -- If this does have a flag stand.
+                is_ready = 0 
+                
+                if script_option[2] == 0 then -- If it's multi-flag.
+                    if current_team != neutral_team then
+                        is_ready = 1
+                    end
+                altif script_option[2] == 1 then -- If it's one-side flag.
+                    if current_team == team[0] then
+                        team[1].object[0].set_waypoint_visibility(everyone)
+                        team[0].object[0].set_waypoint_visibility(no_one)
+                        is_ready = 1
+                    end
+                altif script_option[2] == 2 then -- If it's neutral flag.
+                    if current_team == neutral_team then
+                        is_ready = 1
+                    end
+                end
+
+                if is_ready == 1 then 
+                    if script_option[2] == 1 or script_option[2] == 2 then -- If it's one-side or neutral flag.
+                        for each object do
+                            if current_object.is_of_type(flag) then 
+                                current_team.object[1] = current_object -- Set this flag to the current team.
+                                is_ready = 0
+                            end
+                        end
+                    altif script_option[2] == 0 then -- If it's multi-flag.
+                        for each object do
+                            if current_object.is_of_type(flag) then
+                                if is_ready == 1 then
+                                    temporal_number_reference = 1 -- Flag finded.
+
+                                    do
+                                        flag_carrier = no_player
+                                        flag_carrier = current_object.get_carrier()
+                                        
+                                        if flag_carrier != no_player then
+                                            if flag_carrier.team == current_team then
+                                                temporal_number_reference = 0 -- A player of this team is carrying a flag.
+                                            end
+                                        end 
+                                    end
+
+                                    for each team do
+                                        if current_team.object[1] == current_object then 
+                                            temporal_number_reference = 0 -- Flag finded.
+                                        end
+                                    end
+
+                                    if temporal_number_reference == 1 then -- If no one is carrying the flag or the foreach works?
+                                        current_team.object[1] = current_object
+                                        is_ready = 0
+                                    end
+                                end
+                            end
+                        end
+                    end
+
+                    if is_ready == 1 then
+                        -- Create and assing a new flag.
+                        current_team.object[1] = current_team.object[0].place_at_me(flag, none, never_garbage_collect, 0, 0, 3, none)
+                    end
+
+                    flag_or_biped_reference = current_team.object[1]
+
+                    if is_ready == 0 then 
+                        flag_or_biped_reference.number[0] = 1 -- The flag was carried.
+                    end
+
+                    flag_or_biped_reference.team = current_team
+
+                    current_team.object[1].set_pickup_permissions(enemies)
+                    current_team.object[1].set_weapon_pickup_priority(high)
+                    current_team.object[1].set_waypoint_icon(flag)
+                    current_team.object[1].set_waypoint_priority(high)
+
+                    flag_or_biped_reference.set_shape(cylinder, 7, 6, 3)
+
+                    if script_option[2] == 2 then 
+                        current_team.object[1].set_pickup_permissions(everyone)
+                    end
+                end
+            end
+        end
+    end
+end
+
+function handle_flag_being_carried() 
+    flag_or_biped_reference.player[0] = flag_carrier -- Sets the flag carrier to the flag reference.
+        
+    flag_carrier.timer[1].set_rate(-100%) -- Flag carrier timer decreasing.
+    flag_carrier.apply_traits(script_traits[0]) -- Flag carrier traits applied.
+
+    if flag_carrier.timer[1].is_zero() then 
+        flag_carrier.script_stat[1] += 1 -- Increases the flag carry time of the flag carrier.
+        flag_carrier.timer[1].reset()
+    end
+
+    flag_or_biped_reference.set_waypoint_visibility(no_one) -- Hides the flag waypoint.
+    flag_carrier.biped.set_waypoint_icon(flag) -- Set a waypoint to the flag carrier biped.
+
+    flag_or_biped_reference.number[0] = 1 -- The flag was carried.
+
+    flag_or_biped_reference.timer[0] = script_option[1] -- Defines the reset time to the flag.
+    flag_or_biped_reference.timer[1] = script_option[0] -- Defines the return time to the flag.
+
+    flag_or_biped_reference.set_progress_bar(0, no_one) -- Enables a progress bar to the flag.
+
+    is_flag_being_carried = 1 -- Flag is being carried.
+
+    flag_carrier.timer[0] = script_option[4] -- Defines the flag carrier cooldown.
+
+    current_team_flag_carrier = flag_carrier.team -- Defines the team that's carrying the flag.
+
+    -- If the flag carrier biped it's inside of the flag stand shape.
+    if current_team_flag_carrier.object[0].shape_contains(flag_carrier.biped) then 
+        is_ready = 1
+
+        script_widget[0].set_visibility(flag_carrier, false)
+
+        if script_option[3] == 1 then -- If the flag at home to score option is enabled.
+            if script_option[2] == 0 then -- If it's multi-flag.
+                temporal_object_reference = current_team_flag_carrier.object[1] -- Set the red team's flag as a temporal object reference.
+
+                if temporal_object_reference.number[0] != 0 then -- If this team has not their flag at home.
+                    is_ready = 0
+                    script_widget[0].set_visibility(flag_carrier, true) -- Show flag must be at home message.
+                end
+            end
+        end
+
+        if is_ready == 1 then
+            flag_carrier.score += 1 -- Add score to the flag carrier.
+            flag_carrier.script_stat[0] += 1 -- Add score to the flag captures.
+            current_team.object[1].delete() -- Delete the flag scored.
+            send_incident(flag_scored, flag_carrier, all_players)
+
+            -- Lead announcement on capture.
+            if script_option[5] > 0 then -- If lead-to-win is enabled.
+                -- Determine which team is red/blue based on round number.
+                is_ready = game.current_round -- Reusing is_ready global for "is round odd".
+                is_ready %= 2 -- Get remainder to determine if round is odd.
+                
+                -- Check team[0] lead.
+                temporal_number_reference = team[0].score
+                temporal_number_reference -= team[1].score -- Calculate score difference.
+                
+                if temporal_number_reference >= 1 then -- If team[0] has a lead of at least 1.
+                    if is_ready == 0 then -- If even-numbered round, team[0] is Red Team.
+                        game.show_message_to(all_players, none, "Red Team has a %n point lead!", temporal_number_reference)
+                    altif is_ready != 0 then -- If odd-numbered round, team[0] is Blue Team.
+                        game.show_message_to(all_players, none, "Blue Team has a %n point lead!", temporal_number_reference)
+                    end
+                end
+                
+                -- Check team[1] lead.
+                temporal_number_reference = team[1].score
+                temporal_number_reference -= team[0].score -- Calculate score difference.
+                
+                if temporal_number_reference >= 1 then -- If team[1] has a lead of at least 1.
+                    if is_ready == 0 then -- If even-numbered round, team[1] is Blue Team.
+                        game.show_message_to(all_players, none, "Blue Team has a %n point lead!", temporal_number_reference)
+                    altif is_ready != 0 then -- If odd-numbered round, team[1] is Red Team.
+                        game.show_message_to(all_players, none, "Red Team has a %n point lead!", temporal_number_reference)
+                    end
+                end
+            end
+            
+            -- Lead-to-win check.
+            if script_option[5] > 0 then -- If lead-to-win is enabled.
+                temporal_number_reference = team[0].score
+                temporal_number_reference -= team[1].score -- Calculate team[0]'s lead.
+                if temporal_number_reference >= script_option[5] then -- If team[0] has reached the required lead.
+                    game.end_round() -- End the round, team[0] wins.
+                end
+                
+                temporal_number_reference = team[1].score
+                temporal_number_reference -= team[0].score -- Calculate team[1]'s lead.
+                if temporal_number_reference >= script_option[5] then -- If team[1] has reached the required lead.
+                    game.end_round() -- End the round, team[1] wins.
+                end
+            end
+        end
+    end
+end
+
+function handle_flag_reset()
+    flag_or_biped_reference.delete()
+
+    if script_option[2] == 2 then -- If is neutral flag.
+        send_incident(flag_reset_neutral, flag_or_biped_reference.player[0], current_team)
+    altif script_option[2] != 2 then -- If is multi-flag or one-side flag.
+        send_incident(flag_reset, current_team, current_team)
+    end
+end
+
+function handle_flag_recover()
+    flag_or_biped_reference.delete()
+
+    send_incident(flag_recovered, current_team, current_team)
+
+    for each player do
+        if current_player.number[1] == 1 then -- If this player was recovering the flag.
+            if current_player.team == current_team then -- If this player team is the same as the current team.
+                current_player.script_stat[2] += 1 -- Increase the flags returned in one for this player.
+                current_player.number[1] = 0 -- This player is not returning a flag anymore.
+            end
+        end
+    end
+end
+
+function handle_flag_being_dropped()
+    if flag_or_biped_reference.number[0] == 1 then -- If someone carried the flag.
+        flag_or_biped_reference.number[0] = 2 -- Flag: the flag it's dropped.
+
+        if script_option[0] != 1 then -- If the flag return time it's different from one. 
+            flag_or_biped_reference.set_progress_bar(1, allies) -- Sets the selected return time for the flag.
+        end
+
+        flag_or_biped_reference.set_waypoint_icon(flag)
+        flag_or_biped_reference.set_waypoint_visibility(everyone)
+        current_team.object[1].set_waypoint_priority(high)
+    end
+
+    flag_or_biped_reference = current_team.object[1]
+
+    if flag_or_biped_reference != no_object then -- If a flag reference exist.
+        if flag_or_biped_reference.number[0] == 2 or flag_or_biped_reference.number[0] == 3 then -- If the flag it's dropped or ???
+            flag_or_biped_reference.timer[0].set_rate(-100%) -- Decrease the flag reset time.
+            flag_or_biped_reference.timer[1].set_rate(100%) -- Increase the flag return time.
+
+            for each player do
+                current_player.number[1] = 0 -- If this player isn't returing the flag
+
+                if current_player.team == current_team then -- If this players belongs to the current team.
+                    if flag_or_biped_reference.shape_contains(current_player.biped) then -- If the player biped is inside of the flag shape.
+                        current_player.number[1] = 1 -- Flag: Player is returning the flag
+
+                        flag_or_biped_reference.timer[1].set_rate(-100%) -- Decrease the flag return time.
+
+                        if script_option[0] == 1 then -- If the flag return time is setted to 'instant'.
+                            flag_or_biped_reference.timer[1].set_rate(-1000%)
+                        end
+
+                        flag_or_biped_reference.set_waypoint_priority(blink)
+                    end
+                end 
+            end
+
+            -- For each flag.
+            for each object with label 1 do
+                if current_object.timer[0] < 6 then -- If the timer of the current flag is less than 6.
+                    current_object.set_waypoint_priority(blink) -- Make the waypoint start blinking.
+                end
+            end
+
+            if flag_or_biped_reference.is_out_of_bounds() or flag_or_biped_reference.timer[0].is_zero() then 
+                handle_flag_reset()
+            end
+
+            if flag_or_biped_reference.timer[1].is_zero() then 
+                handle_flag_recover()
+            end
+        end
+    end
+end
+
+function handle_flag_drop_incident()
+    flag_or_biped_reference.number[3] = 1 -- Drop incident have been sented.
+
+    if script_option[2] == 2 then -- If is neutral flag.
+        send_incident(flag_dropped_neutral, flag_or_biped_reference.player[0], current_team)
+    end
+
+    if script_option[2] != 2 then -- if is not neutral flag.
+        send_incident(flag_dropped, flag_or_biped_reference.player[0], current_team)
+    end
+
+    flag_or_biped_reference.timer[2].reset()
+end
+
+function handle_flag_grabbed_incident()
+    flag_or_biped_reference.number[2] = 1 -- The flag have been grabbed.
+
+    if script_option[2] == 2 then -- If is neutral flag.
+        send_incident(flag_grabbed_neutral, flag_carrier, current_team)
+    end
+
+    if script_option[2] != 2 then -- If is not neutral flag.
+        send_incident(flag_grabbed, flag_carrier, current_team)
+    end
+
+    flag_or_biped_reference.timer[2].reset() -- Reset the return time, since it was just grabbed.
+end
+
+function handle_flag_states()
+    flag_or_biped_reference = current_team.object[1]
+
+    flag_carrier = no_player -- Cleaning.
+    flag_carrier = flag_or_biped_reference.get_carrier()
+
+    is_player_inside_flag_hill_marker = 0 -- Flag: No one is inside the flag hill marker shape.
+
+    if flag_carrier != no_player then -- If the flag carrier exist.
+        handle_flag_being_carried()
+    end
+
+    if flag_carrier == no_player then -- If the flag carrier does not exist.
+        handle_flag_being_dropped()
+    end
+
+    flag_or_biped_reference = current_team.object[1] -- Set the current team's flag as the flag reference.
+    temporal_object_reference = flag_or_biped_reference.player[0].biped -- Set a temporal reference to the flag carrier biped. 
+    flag_carrier = flag_or_biped_reference.player[0] -- Set the flag carrier to the flag carrier variable.
+    
+    flag_or_biped_reference.timer[2].set_rate(-100%) -- Decrease the timer that allows to send the incident of a flag dropped/grabbed.
+
+    if flag_or_biped_reference.timer[2].is_zero() then -- If the timer that allows these incidents be sented, entry.
+        if flag_or_biped_reference.number[0] == 2 then -- If the flag is dropped.
+            if flag_or_biped_reference.number[3] != 1 then -- If the flag drop incident haven't been sented.
+                handle_flag_drop_incident()
+            end
+        end
+
+        if flag_or_biped_reference.number[0] == 1 then -- If the flag has been carried.
+            if flag_or_biped_reference.number[2] != 1 then -- If the flag haven't been grabbed.
+                handle_flag_grabbed_incident()
+            end
+        end
+
+        if flag_or_biped_reference.number[0] != 1 then -- If the flag wasn't been carried.
+            flag_or_biped_reference.number[2] = 0 -- The flag it's not grabbed.
+        altif flag_or_biped_reference.number[0] == 1 or flag_or_biped_reference.number[0] == 0 then -- If the flag was carried or the flag is on it's flag stand.
+            flag_or_biped_reference.number[3] = 0 -- Dropped flag incident haven't been sented.
+        end
+    end
+end
+
+function handle_flag_carrier_killed_incident()
+    flag_or_biped_reference = current_team.object[1] -- Set a reference to the current team's flag.
+
+    for each player do
+        if flag_or_biped_reference.player[0].killer_type_is(kill) then -- If a enemy player killed the flag carrier.
+            flag_carrier_killer = flag_or_biped_reference.player[0].try_get_killer() -- Get the flag carrier killer.
+            send_incident(flagcarrier_kill, flag_carrier_killer, flag_or_biped_reference.player[0]) -- Send the flag carrier killed incident.
+            flag_or_biped_reference.player[0] = no_player -- Cleaning.
+        end
+    end
+end
+
+function cleanup_flags_from_empty_teams()
+    if current_team != neutral_team then -- If this team is not neutral.
+        if not current_team.has_any_players() then -- If this team has players, then don't enter.
+            if current_team.object[1] != no_object then -- If this team has a flag.
+                flag_or_biped_reference = current_team.object[1]
+
+                if flag_or_biped_reference.number[0] == 0 then  -- If the flag hasn't been carried.
+                    current_team.object[1].delete() -- Delete this flag.
+                    current_team.object[1] = no_object -- Cleaning.
+                end
+            end
+        end
+    end
+end
+
+function handle_teams()
+    for each team do
+        cleanup_flags_from_empty_teams()
+        handle_flag_states()
+        set_flag_object()
+        handle_modes()
+
+        if current_team.has_any_players() then -- If this team has any players.
+            handle_flag_carrier_killed_incident()
+        end
+    end
+end
+
+function handle_flag_hill_markers()
+    if current_object.object[0] == no_object then -- If this flag doesn't have a hill marker to give a shape to the flag.
+        current_object.object[0] = current_object.place_at_me(hill_marker, none, never_garbage_collect | suppress_effect, 0, 0, 0, none)
+        current_object.object[0].set_shape(cylinder, 10, 10, 10)
+
+        current_object.object[0].set_shape_visibility(no_one) -- Modification: no_one
+
+        current_object.object[0].attach_to(current_object, 0, 0, 0, relative)
+    end
+end
+
+function handle_one_sided_flag_reset_timer()
+    flag_or_biped_reference = current_object -- Set the flag to this variable.
+
+    for each player do
+        if current_player.team != flag_or_biped_reference.team then -- If the team of this player is different from the flag team's.
+            if flag_or_biped_reference.object[0].shape_contains(current_player.biped) then -- If the hill marker shape contains the current player's biped.
+                is_player_inside_flag_hill_marker = 1 -- Flag: A player it's inside of the hill marker shape, attached to the flag.
+                flag_or_biped_reference.timer[0].set_rate(0%) -- Stops the reset timer.
+            end
+        end
+    end
+end
+
+function handle_flag_carrier_references()
+    flag_or_biped_reference = current_object
+
+    if flag_or_biped_reference.player[0] != no_player then -- If a player is carrying this flag.
+        for each player do
+            if current_player == flag_or_biped_reference.player[0] then -- If this player is the flag carrier.
+                flag_carrier = no_player -- Cleaning.
+                flag_carrier = flag_or_biped_reference.get_carrier() -- Set the flag carrier.
+
+                if flag_carrier == no_player then -- If there's no flag carrier.
+                    flag_or_biped_reference.player[0] = no_player -- Clear the reference.
+                end
+            end
+        end
+    end
+end
+
+function handle_flags()
+    is_flag_being_carried = 0 -- The flag isn't beign carried.
+
+    -- For each flag.
+    for each object with label 1 do 
+        handle_flag_hill_markers()
+        handle_flag_carrier_references()
+
+        if script_option[2] == 1 then -- If one-sided flag is enabled.
+            handle_one_sided_flag_reset_timer()
+        end
+    end
+end
+
+function handle_game_states()
+    if not game.round_timer.is_zero() then -- If round timer is zero.
+        game.grace_period_timer = 0 -- Set grace period timer to zero.
+    end
+
+    if game.round_time_limit > 0 then -- If round time limit it's higher than zero.
+        if not game.round_timer.is_zero() then -- If round timer is not zero.
+            is_sudden_death_started = 0 -- Flag: sudden death hasn't started.
+        end
+
+        if game.round_timer.is_zero() then -- If round timer is zero.
+            if is_flag_being_carried == 1 then -- If the flag is being carried.
+                game.sudden_death_timer.set_rate(-100%) -- Decrease sudden death timer.
+                game.grace_period_timer.reset() -- Reset grace period timer.
+
+                if is_sudden_death_started == 0 then -- If sudden death hasn't started.
+                    send_incident(sudden_death, all_players, all_players) -- Sudden death has started.
+                    is_sudden_death_started = 1 -- Sudden death has started.
+                altif game.sudden_death_time > 0  then -- If sudden death time is greater than zero.
+                    if game.grace_period_timer > game.sudden_death_timer then -- If grace period timer is greater than sudden death timer.
+                        game.grace_period_timer = game.sudden_death_timer -- Sets sudden death timer value to grace period timer.
+                    end
+                end
+            end
+
+            if is_flag_being_carried == 0 then -- If no one is carrying the flag.
+                game.grace_period_timer.set_rate(-100%) -- Decrease the grace period timer.
+                
+                if game.grace_period_timer.is_zero() then -- If grace period timer is zero.
+                    game.end_round() -- End round.
+                end
+            altif game.sudden_death_timer.is_zero() then -- If sudden death timer is zero.
+            game.end_round() -- End round.
+            end
+        end
+    end
+end
+
+do
+    handle_game_states()
+    handle_players()
+    handle_teams()
+    handle_flags()
+end
+
+-- Capture the flag
