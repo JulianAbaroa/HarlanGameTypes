@@ -1,0 +1,119 @@
+-- For c_teleport.
+alias linked_teleport = object.object[0]
+
+-- For c_biped.
+alias saved_teleport = object.object[0]
+alias delay = object.number[0]
+
+function initialize_custom_teleport()
+    alias c_teleport = current_object
+
+    c_teleport.set_waypoint_range(0, 10)
+    c_teleport.set_waypoint_visibility(everyone)
+    c_teleport.set_waypoint_priority(low)   
+
+    inline: if c_teleport.is_of_type(hill_marker) then
+        c_teleport.set_waypoint_text("Sender")
+        c_teleport.set_shape_visibility(everyone)  
+                
+    inline: altif c_teleport.is_of_type(capture_plate) then
+        c_teleport.set_waypoint_text("Reciever")
+        c_teleport.set_shape_visibility(no_one)
+    end
+end
+
+function link_teleports()
+    for each object with label "teleporter" do
+        alias c_teleport = allocate global.object
+        c_teleport = current_object
+
+        inline: if c_teleport.spawn_sequence > 0 then
+            inline: if c_teleport.is_of_type(hill_marker) or c_teleport.is_of_type(capture_plate) then
+                for each object with label "teleporter" do
+                    alias temp_teleport = current_object
+    
+                    inline: if c_teleport.spawn_sequence > 0 then
+                        inline: if temp_teleport.is_of_type(hill_marker) or temp_teleport.is_of_type(capture_plate) then
+                            -- If these teleports are not the same one.
+                            inline: if c_teleport != temp_teleport then
+                                -- If these teleports have to link together.
+                                inline: if temp_teleport.spawn_sequence == c_teleport.spawn_sequence then
+                                    c_teleport.linked_teleport = temp_teleport
+                                    temp_teleport.linked_teleport = c_teleport
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+function custom_teleports()
+    link_teleports()
+
+    for each object with label "teleporter" do
+        alias c_teleport = current_object
+
+        inline: if c_teleport.spawn_sequence > 0 then
+            inline: if c_teleport.is_of_type(hill_marker) or c_teleport.is_of_type(capture_plate) then
+                initialize_custom_teleport()
+            end
+
+            -- If this teleport has a linked teleport.
+            inline: if c_teleport.linked_teleport != no_object then
+                -- Main logic
+                inline: if c_teleport.is_of_type(hill_marker) then
+                    for each player do
+                        alias c_player = current_player
+                        alias c_biped = allocate global.object
+                        c_biped = c_player.biped
+
+                        -- If a player has entered this custom teleport.
+                        inline: if c_teleport.shape_contains(c_biped) and c_biped.saved_teleport == no_object then
+                            alias c_weapon = allocate global.object
+                            c_weapon = c_player.get_weapon(primary)
+
+                            -- If this player has a flag.
+                            inline: if c_weapon.is_of_type(flag) then
+                                -- If the custom teleport and the flag are from the same team.
+                                inline: if c_teleport.team == c_weapon.team then
+                                    c_biped.attach_to(c_teleport.linked_teleport, 0, 0, 0, relative)
+                                    c_biped.saved_teleport = c_teleport.linked_teleport
+                                end
+
+                            -- If this player doesn't have a flag.
+                            inline: altif not c_weapon.is_of_type(flag) then
+                                c_biped.attach_to(c_teleport.linked_teleport, 0, 0, 0, relative)
+                                c_biped.saved_teleport = c_teleport.linked_teleport
+                            end
+                        end 
+
+                        --If this player has a saved teleport
+                        inline: if c_biped.saved_teleport != no_object then
+                            -- If this player is not inside the saved teleport's shape.
+                            inline: if not c_biped.saved_teleport.shape_contains(c_biped) then
+                                c_biped.saved_teleport = no_object
+                                c_biped.delay = 0
+                            end
+
+                            c_biped.delay += 1
+
+                            inline: if c_biped.delay == 50 then
+                                c_biped.detach()
+                                c_biped.delay = 0
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+
+
+do
+    custom_teleports()
+end

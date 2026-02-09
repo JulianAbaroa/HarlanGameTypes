@@ -64,3 +64,9 @@ on object death: do
         end
     end
 end
+
+
+
+do
+    blinkshot()
+end

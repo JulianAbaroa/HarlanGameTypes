@@ -1,0 +1,50 @@
+alias betrayals = player.number[0]
+
+function betrayers()
+    for each player do
+        alias c_player = current_player
+
+        -- If the current player was killed by a teammate
+        inline: if c_player.killer_type_is(betrayal) then 
+            alias betrayer = allocate global.player
+
+            -- Save the betrayer on a global player
+            betrayer = c_player.try_get_killer()
+
+            inline: if c_player.betrayals < 3 then 
+                -- Increase the betrayals of the betrayer
+                betrayer.betrayals += 1
+
+                -- If the betrayer betrayals is less than 4
+                inline: if betrayer.betrayals < 4 then 
+                    game.show_message_to(all_players, none, "Teamkilling is not allowed, %n!", betrayer)
+                end
+
+                inline: if betrayer.betrayals >= 4 then 
+                    betrayer.biped.set_waypoint_text("Betrayer")
+                    betrayer.biped.set_waypoint_visibility(everyone)
+
+                    -- Warn all the players
+                    game.show_message_to(all_players, none, "%n has been penalized for teamkilling", betrayer)
+                end
+            end
+        end
+
+        inline: if c_player.betrayals == 4 then 
+            -- Apply the punishment
+            c_player.apply_traits(script_traits[0])
+
+            c_player.biped.remove_weapon(primary, true)
+            c_player.biped.remove_weapon(secondary, true)
+            
+            c_player.frag_grenades = 0
+            c_player.plasma_grenades = 0
+        end
+    end
+end
+
+
+
+do
+    betrayers()
+end

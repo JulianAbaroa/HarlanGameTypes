@@ -1,6 +1,6 @@
 -- Credits to Weesee, Rabid and obviously the MCC Gametypers community.
 
--- Capture the Flag gametype uses:
+-- Capture the Flag uses:
 
 -- global.number[0-4]
 -- global.object[0-1]
@@ -9,6 +9,11 @@
 -- player.number[0-1]
 -- player.timer[0-2]
 -- team.object[0-1]
+
+-- Harlan 1.2 uses:
+
+-- global.object[2]
+-- global.number[5-8]
 
 -- Declarations
 
@@ -377,9 +382,12 @@ end
 
 
 
--- Custom teleporters
+-- Custom teleports
 
+-- For c_teleport.
 alias linked_teleport = object.object[0]
+
+-- For c_biped.
 alias saved_teleport = object.object[0]
 alias delay = object.number[0]
 
@@ -490,20 +498,21 @@ function custom_teleports()
     end
 end
 
--- Custom teleporters
+-- Custom teleports
 
 
 
 
 
--- Push telesporters
+-- Push teleports
 
--- For c_teleport.
-alias initialized = object.number[0]
-alias is_blocked = object.number[1]
-alias is_banned = object.number[2]
+-- For c_teleport. 
+-- TODO: TEST THIS CHANGE NUMBER 0 & 1
+alias is_blocked = object.number[0]
+alias is_banned = object.number[1]
 
 -- For c_falcon.
+alias initialized = object.number[0]
 alias grace_timer = object.timer[0]
 
 function initialize_falcon()
@@ -580,7 +589,7 @@ function push_teleports()
     end
 end
 
--- Push telesporters
+-- Push teleports
 
 
 

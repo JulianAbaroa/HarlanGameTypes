@@ -1,0 +1,87 @@
+-- For c_teleport.
+alias is_blocked = object.number[0]
+alias is_banned = object.number[1]
+
+-- For c_falcon.
+alias initialized = object.number[0]
+alias grace_timer = object.timer[0]
+
+function initialize_falcon()
+    alias c_falcon = current_object
+
+    c_falcon.is_blocked = 0
+    c_falcon.is_banned = 0
+    c_falcon.grace_timer = 0
+    c_falcon.grace_timer.set_rate(0%)
+end
+
+function push_teleports()
+    for each object with label "teleporter" do
+        alias c_teleport = current_object
+
+        inline: if c_teleport.spawn_sequence == -1 then
+            c_teleport.is_blocked = 0
+
+            c_teleport.set_shape(cylinder, 20, 15, 0)
+            c_teleport.set_waypoint_range(0, 20)
+            c_teleport.set_waypoint_text("Do not block!")
+        end
+    end
+
+    -- For each falcon do
+    for each object with label 0 do
+        alias c_falcon = allocate global.object
+        c_falcon = current_object
+
+        inline: if c_falcon.initialized == 0 then
+            c_falcon.initialized = 1
+            initialize_falcon()
+        end
+
+        alias is_blocking = allocate global.number
+        is_blocking = 0
+
+        for each object with label "teleporter" do
+            alias c_teleport = current_object
+
+            inline: if c_teleport.spawn_sequence == -1 and c_teleport.shape_contains(c_falcon) then
+                c_falcon.grace_timer.set_rate(100%)
+                c_teleport.is_blocked = 1
+                is_blocking = 1
+
+                inline: if c_falcon.grace_timer >= 15 or c_falcon.is_banned == 1 then
+                    c_falcon.apply_upward_impulse()
+                    c_falcon.is_banned = 1
+                end
+            end
+        end
+
+        inline: if is_blocking == 0 then
+            c_falcon.grace_timer.set_rate(0%)
+            c_falcon.grace_timer = 0
+        end
+    end
+
+    for each object with label "teleporter" do
+        alias c_teleport = current_object
+
+        inline: if c_teleport.spawn_sequence == -1 then
+            inline: if c_teleport.is_blocked == 1 then
+                c_teleport.set_shape_visibility(everyone)
+                c_teleport.set_waypoint_priority(blink)
+                c_teleport.set_waypoint_visibility(everyone)
+
+            inline: altif c_teleport.is_blocked == 0 then
+                c_teleport.set_shape_visibility(no_one)
+                c_teleport.set_waypoint_priority(normal)
+                c_teleport.set_waypoint_visibility(no_one)
+            end
+        end
+    end
+end
+
+
+
+do
+    push_teleports()
+end

@@ -1,0 +1,94 @@
+declare global.number[0] with network priority low
+alias c_round = global.number[0]
+
+enum map_areas
+    nothing = 0
+    middle = 1
+    valley = 2
+    hangar = 3
+    sea_red = 4
+    sea_blue = 5
+    red_base = 6
+    blue_base = 7
+    centre_island = 8
+    up = 9
+    down = 10
+    bottom = 11
+end
+
+function qol_teleports()
+    c_round = game.current_round
+    c_round %= 2 -- Is round odd
+
+    for each object with label "teleporter" do
+        alias c_teleport = current_object
+
+        inline: if not c_teleport.is_of_type(capture_plate) and not c_teleport.is_of_type(hill_marker) then
+            -- Shape
+            c_teleport.set_shape_visibility(everyone)
+
+            -- Waypoint
+            c_teleport.set_waypoint_visibility(everyone)
+            c_teleport.set_waypoint_priority(low)
+            c_teleport.set_waypoint_range(0, 20)
+
+            inline: if c_teleport.spawn_sequence == map_areas.middle then
+                c_teleport.set_waypoint_text("Middle")
+
+            inline: altif c_teleport.spawn_sequence == map_areas.valley then
+                c_teleport.set_waypoint_text("Valley")
+            
+            inline: altif c_teleport.spawn_sequence == map_areas.hangar then
+                c_teleport.set_waypoint_text("Hangar")
+
+            inline: altif c_teleport.spawn_sequence == map_areas.sea_red then
+                if c_round == 0 then
+                    c_teleport.set_waypoint_text("Sea Red")
+                altif c_round != 0 then
+                    c_teleport.set_waypoint_text("Sea Blue")
+                end
+
+            inline: altif c_teleport.spawn_sequence == map_areas.sea_blue then
+                if c_round == 0 then
+                    c_teleport.set_waypoint_text("Sea Blue")
+                altif c_round != 0 then
+                    c_teleport.set_waypoint_text("Sea Red")
+                end
+
+            inline: altif c_teleport.spawn_sequence == map_areas.red_base then
+                inline: if c_round == 0 then
+                    c_teleport.set_waypoint_text("Red Base")
+                
+                inline: altif c_round != 0 then
+                    c_teleport.set_waypoint_text("Blue Base")
+                end
+
+            inline: altif c_teleport.spawn_sequence == map_areas.blue_base then
+                inline: if c_round == 0 then
+                    c_teleport.set_waypoint_text("Blue Base")
+
+                inline: altif c_round != 0 then
+                    c_teleport.set_waypoint_text("Red Base")
+                end
+
+            inline: altif c_teleport.spawn_sequence == map_areas.centre_island then
+                c_teleport.set_waypoint_text("Island")
+                
+            inline: altif c_teleport.spawn_sequence == map_areas.up then
+                c_teleport.set_waypoint_text("Up")
+            
+            inline: altif c_teleport.spawn_sequence == map_areas.down then
+                c_teleport.set_waypoint_text("Down")
+            
+            inline: altif c_teleport.spawn_sequence == map_areas.down then
+                c_teleport.set_waypoint_text("Bottom")
+            end
+        end
+    end
+end
+
+
+
+on init: do
+    qol_teleports()
+end
