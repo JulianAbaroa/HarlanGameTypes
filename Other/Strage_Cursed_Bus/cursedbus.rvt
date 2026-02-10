@@ -1,0 +1,187 @@
+alias Processed      = allocate object.number
+alias Attachment = allocate object.object
+-- allocate PersistentChild = allocate object.object
+alias w0       = script_widget[0]
+alias spawned_phantom = allocate global.number
+
+on init: do
+	for each player do
+		current_player.set_objective_text("hello world")
+		send_incident(rocket_race_game_start, current_player, all_players)
+		w0.set_visibility(current_player, true)
+		-- w0.set_text("Cursed Bus")
+		-- send message welcome to cursed bus
+
+		-- this doesn't work yet
+		-- -- spawn phantom at skybox
+		-- for each object do
+		-- 	if spawned_phantom == 0 then
+		-- 		alias ph  = allocate temporary object
+		-- 		ph = current_object.place_at_me(phantom,  none, never_garbage_collect, 0, 0, 127, none)
+		-- 		ph.set_invincibility(1)
+		-- 		alias temp_stand = allocate temporary object
+		-- 		temp_stand = current_object.place_at_me(flag_stand, none, never_garbage_collect, 0,0,0,none)
+		-- 		ph.attach_to(temp_stand, 0, 0, 0, relative)
+		-- 		ph.set_scale(20000)
+		-- 		spawned_phantom = 1
+		-- 	end
+		-- end
+	end
+end
+
+-- banshee
+for each object with label 0 do
+	-- remove existing weapon
+	if current_object.Processed == 0 then
+		alias this_banshee = allocate temporary object
+		this_banshee = current_object
+		for each object do
+				alias d = allocate temporary number
+				d = current_object.get_distance_to(this_banshee)
+				if d == 0 and current_object != this_banshee then
+				current_object.delete()
+				current_player.set_objective_text("deleted something")
+				send_incident(race_game_start, all_players, all_players)
+			end
+		end
+
+		-- add revenant gun
+		alias temp_revenant = allocate temporary object
+		temp_revenant = current_object.place_at_me(revenant, none, none, 0, 0, 0, none)
+		for each object do
+			alias d = allocate temporary number
+			d = current_object.get_distance_to(temp_revenant)
+			if d == 0 and current_object != this_banshee and current_object != temp_revenant then
+				current_object.detach()
+				current_object.attach_to(this_banshee, 7, 0, 4, relative)
+				temp_revenant.delete()
+			end
+		end
+
+		current_object.Processed = 1
+	end
+end
+
+-- van gets a tank gun
+for each object with label 1 do
+	if current_object.Processed == 0 then
+		alias this_van = allocate temporary object
+		this_van = current_object
+
+		alias temp_tank = allocate temporary object
+		temp_tank = current_object.place_at_me(scorpion, none, none, 0, 0, 0, none)
+		for each object do
+			alias d = allocate temporary number
+			d = current_object.get_distance_to(temp_tank)
+			if d == 0 and current_object != this_van and current_object != temp_tank and not current_object.is_of_type(scorpion_turret_anti_infantry) then
+				current_object.detach()
+				current_object.attach_to(this_van, 0, 0, 11, relative)
+				temp_tank.delete()
+			end
+		end
+		current_object.Processed = 1
+	end
+end
+
+-- mongoose gets a wraith gun
+for each object with label 2 do
+	if current_object.Processed == 0 then
+		alias this_goose = allocate temporary object
+		this_goose = current_object
+
+		alias temp_tank = allocate temporary object
+		temp_tank = current_object.place_at_me(wraith, none, none, 0, 0, 0, none)
+		for each object do
+			alias d = allocate temporary number
+			d = current_object.get_distance_to(temp_tank)
+			if d == 0 and current_object != this_goose and current_object != temp_tank then
+				current_object.detach()
+				current_object.attach_to(this_goose, -5, 0, 5, relative)
+				current_object.set_scale(50)
+				temp_tank.delete()
+			end
+		end
+		current_object.Processed = 1
+	end
+end
+
+-- ghost gets a turret
+for each object with label 3 do
+	if current_object.Processed == 0 then
+		alias this_ghost = allocate temporary object
+		this_ghost = current_object
+
+		alias temp_stand = allocate temporary object
+		temp_stand = current_object.place_at_me(flag_stand, none, none, 0,0,0,none)
+		current_object.Attachment = temp_stand.place_at_me(warthog_turret, none, none, 0, 0, 0, none)
+		current_object.Attachment.attach_to(temp_stand, 0, 0, 0, relative)
+		-- temp_turret.set_scale(200)
+		temp_stand.attach_to(this_ghost, 2, 0, 4, relative)
+		temp_stand.set_scale(1)
+		
+		current_object.Processed = 1
+	end
+end
+
+-- falcon gets a turret
+for each object with label 4 do
+	if current_object.Processed == 0 then
+		alias this_falc = allocate temporary object
+		this_falc = current_object
+
+		-- turret
+		alias temp_stand = allocate temporary object
+		temp_stand = current_object.place_at_me(flag_stand, none, none, 0,0,0,none)
+		current_object.Attachment = temp_stand.place_at_me(warthog_turret_rocket, none, none, 0, 0, 0, none)
+		current_object.Attachment.attach_to(temp_stand, 0, 0, 0, relative)
+		-- temp_turret.set_scale(200)
+		temp_stand.attach_to(current_object, 0, 0, 10, relative)
+		temp_stand.set_scale(1)
+
+		-- add revenant gun
+		alias temp_revenant = allocate temporary object
+		temp_revenant = current_object.place_at_me(revenant, none, none, 0, 0, 0, none)
+		for each object do
+			alias d = allocate temporary number
+			d = current_object.get_distance_to(temp_revenant)
+			if d == 0 and current_object != this_falc and current_object != temp_revenant then
+				current_object.detach()
+				current_object.attach_to(this_falc, 5, 0, 5, relative)
+				temp_revenant.delete()
+			end
+		end
+		
+		current_object.Processed = 1
+	end
+end
+
+
+-- cart gets a protecting aura
+for each object with label 5 do
+	if current_object.Processed == 0 then
+
+		alias flagstand = allocate temporary object
+		flagstand = current_object.place_at_me(flag_stand, none, none, 0,0,0,none)
+		flagstand.attach_to(current_object, 0, 0, 0, relative)
+
+
+		current_object.Attachment = flagstand.place_at_me(hill_marker, none, none, 0,0,0,none)
+		current_object.Attachment.set_shape(box, 5, 8, 2, 0) -- width, length, top, and bottom
+		current_object.Attachment.set_shape_visibility(everyone)
+		current_object.Attachment.attach_to(flagstand, 4, 0, 3, relative)
+		-- current_object.PersistentChild = hill
+
+		current_object.Processed = 1
+	end
+	
+	for each player do
+		if current_object.Attachment.shape_contains(current_player.biped) then
+			current_player.apply_traits(script_traits[3]) -- protection
+			-- current_player.biped.kill(false)
+		end
+	end
+end
+
+on object death: do
+	current_object.Attachment.delete()
+end
