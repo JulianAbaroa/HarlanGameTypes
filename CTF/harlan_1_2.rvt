@@ -251,7 +251,7 @@ end
 
 -- QoL
 
-alias spawn_announced = object.number[1] --number[0] of falcons is already used by push teleports!
+alias spawn_announced = object.number[2] --number[0-1] of falcons is already used by push teleports!
 
 enum map_areas
     nothing = 0
@@ -509,10 +509,10 @@ end
 -- For c_teleport. 
 -- TODO: TEST THIS CHANGE NUMBER 0 & 1
 alias is_blocked = object.number[0]
-alias is_banned = object.number[1]
 
 -- For c_falcon.
 alias initialized = object.number[0]
+alias is_banned = object.number[1]
 alias grace_timer = object.timer[0]
 
 function initialize_falcon()
@@ -626,9 +626,9 @@ function blinkshot()
     for each player do
         alias c_player = current_player
         alias killed_blink = allocate global.object
-        killed_blink = c_player.object[0]
+        killed_blink = c_player.blinkshot
 
-        inline: if killed_blink != no_object then
+        inline: if killed_blink != no_object and killed_blink.has_forge_label("blinkshot") then
             alias c_weapon = allocate global.object
             c_weapon = c_player.get_weapon(primary)
 
@@ -643,22 +643,6 @@ function blinkshot()
             inline: if killed_blink.delay >= 40 then
                 c_player.biped.detach()
                 killed_blink.delete()
-            end
-        end
-    end
-end
-
-on object death: do
-    -- If a blink was killed.
-    inline: if killed_object.has_forge_label("blinkshot") then
-        -- If the killer was a player.
-        inline: if killer_player != no_player then
-            alias c_vehicle = allocate global.object
-            c_vehicle = killer_player.get_vehicle()
-
-            -- If the player didn't had a vehicle.
-            inline: if c_vehicle == no_object then
-                killer_player.blinkshot = killed_object.place_at_me(hill_marker, none, none, 0, 0, 0, none)
             end
         end
     end
@@ -721,18 +705,145 @@ end
 
 
 
+-- Comms.
+
+-- For comms.
+alias linked_comms = object.object[0]
+alias instance = object.object[1]
+
+function link_comms()
+    for each object with label "comms" do
+        alias c_comms = allocate global.object
+        c_comms = current_object
+
+        inline: if c_comms.is_of_type(hill_marker) then
+            for each object with label "comms" do
+                alias temp_comms = current_object
+    
+                inline: if temp_comms.is_of_type(hill_marker) then
+                    -- If these comms spawns are not the same one.
+                    inline: if c_comms != temp_comms then
+                        -- If these comms spawns have to link together.
+                        inline: if c_comms.spawn_sequence == temp_comms.spawn_sequence then
+                            c_comms.linked_comms = temp_comms
+                            temp_comms.linked_comms = c_comms
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+function comms()
+    link_comms()
+
+    for each object with label "comms" do
+        alias c_comms = current_object
+
+        -- If the comms team is red team.
+        inline: if c_comms.team == team[0] then
+            -- If is a hill marker and doesnt have a saved comms instance.
+            inline: if c_comms.is_of_type(hill_marker) and c_comms.instance == no_object then
+                c_comms.instance = c_comms.place_at_me(monitor, "comms_instance", none, 0, 0, 0, none)
+        
+                -- Initialize comms.
+                c_comms.instance.remove_weapon(primary, true)
+                c_comms.instance.set_waypoint_visibility(everyone)
+                c_comms.instance.set_waypoint_text("Comms")
+                c_comms.instance.set_waypoint_priority(low)
+                c_comms.instance.set_waypoint_range(0, 50)
+                c_comms.instance.set_scale(75)
+            end
+        
+        inline: altif c_comms.team == team[1] and c_comms.is_of_type(hill_marker) then
+            c_comms.set_shape(cylinder, 30, 30, 10)
+            c_comms.set_shape_visibility(everyone)            
+        end
+    
+        -- If the instance exists and is a monitor.
+        inline: if c_comms.instance != no_object and c_comms.instance.is_of_type(monitor) then
+            c_comms.instance.shields = 0
+            c_comms.instance.health = 1
+
+            -- If the instance is outside the comms spawn shape.
+            inline: if not c_comms.shape_contains(c_comms.instance) then
+                -- Restore its initial position.
+                c_comms.instance.attach_to(c_comms, 0, 0, 0, relative)
+                c_comms.instance.detach()
+            end
+        end
+    end
+end
+
+-- Comms.
+
+
 -- Main.
 on init: do
-    qol_teleports()
+    --qol_teleports()
 end
 
 do
-    scaling_system()
-    custom_teleports()
-    push_teleports()
-    qol_falcon()
-    blinkshot()
-    betrayers()
+    --scaling_system()
+    --custom_teleports()
+    --push_teleports()
+    --qol_falcon()
+    --blinkshot()
+    --betrayers()
+    comms()
+end
+
+on object death: do
+    game.show_message_to(all_players, none, "Object killed")
+
+    -- If the killer was a player.
+    inline: if killer_player != no_player then
+        alias c_vehicle = allocate global.object
+        c_vehicle = killer_player.get_vehicle()
+
+        -- If the player didn't had a vehicle.
+        inline: if c_vehicle == no_object then
+            -- If a blink was killed.
+            inline: if killed_object.has_forge_label("blinkshot") then
+                killer_player.blinkshot = killed_object.place_at_me(hill_marker, "blinkshot", none, 0, 0, 0, none)
+            
+            -- If a comms instance was killed.
+            inline: altif killed_object.has_forge_label("comms_instance") then
+                for each object with label "comms" do
+                    alias c_comms = current_object
+
+                    -- If this is a collector comms and its instance was killed.
+                    inline: if c_comms.team == team[0] and c_comms.instance == no_object then
+                        alias available = allocate global.number
+                        available = 0
+
+                        alias linked_comms = allocate global.object
+                        linked_comms = c_comms.linked_comms
+
+                        inline: if linked_comms != no_object and linked_comms.team == team[1] then
+                            for each object with label 1 do
+                                alias c_falcon = current_object
+                                alias c_health = allocate global.number
+                                c_health = c_falcon.health
+
+                                inline: if linked_comms.shape_contains(c_falcon) and c_health > 0 then
+                                    available = 1
+                                end
+                            end
+                        end
+
+                        inline: if available == 1 then
+                            game.show_message_to(killer_player, none, "There are falcons")
+                            
+                        inline: altif available == 0 then
+                            game.show_message_to(killer_player, none, "There are no falcons")
+                        end
+                    end
+                end
+            end
+        end
+    end
 end
 -- Main.
 

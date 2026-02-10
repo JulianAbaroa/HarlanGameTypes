@@ -527,15 +527,15 @@ end
 
 
 
--- Push teleports.
+-- Push teleports. TODO CHECK THE NUMBERS OF FALCONS 
 
 -- For c_teleport.
 alias is_blocked = object.number[0]
-alias is_banned = object.number[1]
 alias send_feedback = object.number[2]
 alias previous_ss = object.number[3]
 
 -- For c_falcon.
+alias is_banned = object.number[1]
 alias grace_timer = object.timer[0]
 
 function push_teleports()
