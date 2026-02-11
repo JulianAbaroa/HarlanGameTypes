@@ -2,6 +2,8 @@
 
 -- Capture the Flag uses:
 
+-- Declarations:
+
 -- global.number[0-4]
 -- global.object[0-1]
 -- global.player[0-1]
@@ -10,10 +12,79 @@
 -- player.timer[0-2]
 -- team.object[0-1]
 
+
 -- Harlan 1.2 uses:
+
+-- Declarations:
 
 -- global.object[2]
 -- global.number[5-8]
+
+-- Aliases:
+
+-- Scale System:
+
+-- Every object that uses the scale label, has its number[0-1] occupied.
+-- scale_result = object.number[0].
+-- math_remainder = object.number[1].
+
+-- logic_controller object has its number[0] occupied by the selected scale system mode.
+-- scale_system = object.number[0].
+
+-- QoL Falcon:
+
+-- Every falcon has its number[0] occupied.
+-- spawn_announced = object.number[0].
+
+-- Custom Teleports:
+
+-- Every object of type hill_marker & capture_plate and with the
+-- label "teleporter" has its object[0] occupied.
+-- linked_teleport = object.object[0].
+
+-- Every player biped, while using a custom teleport, 
+-- has ocuppied its object[0] & number[0].
+-- saved_teleport = object.object[0].
+-- delay = object.number[0].
+
+-- Push Teleports:
+
+-- Every object with the label "teleporter" & spawn_sequence == -1
+-- has its number[0] occupied.
+-- is_blocked = object.number[0].
+
+-- Every falcon has its number[1-2] & timer[0] occupied.
+-- initialized = object.number[1].
+-- is_banned = object.number[2].
+-- grace_timer = object.timer[0].
+
+-- Blinkshot:
+
+-- Every object of type hill_marker & with the label "blink_spawn" .
+-- has occupied its object[0].
+-- blinkshot = object.object[0].
+
+-- Every player, while using blinkshots, has occupied its object[0].
+-- blinkshot = player.object[0].
+
+-- Every killed_blink has occupied its number[0].
+-- delay = object.number[0].
+
+-- Betrayers Handler:
+
+-- Every player has occupied its number[2].
+-- betrayals = player.number[2].
+
+-- Comms:
+
+-- Every object of type hill_marker & with the label "comms"
+-- has occupied its object[0-1].
+-- linked_comms = object.object[0].
+-- instance = object.object[1].
+
+
+
+
 
 -- Declarations
 
@@ -35,6 +106,7 @@ declare global.number[8] with network priority low
 alias c_round = global.number[8]
 
 -- Declarations
+
 
 
 
@@ -249,9 +321,9 @@ end
 
 
 
--- QoL
+-- QoL Falcon.
 
-alias spawn_announced = object.number[2] --number[0-1] of falcons is already used by push teleports!
+alias spawn_announced = object.number[0]
 
 enum map_areas
     nothing = 0
@@ -304,6 +376,13 @@ function qol_falcon()
     end
 end
 
+-- QoL Falcon.
+
+
+
+
+
+-- QoL Teleports.
 
 function qol_teleports()
     c_round = game.current_round
@@ -376,7 +455,7 @@ function qol_teleports()
     end
 end
 
--- Qol
+-- QoL Teleports.
 
 
 
@@ -507,18 +586,16 @@ end
 -- Push teleports
 
 -- For c_teleport. 
--- TODO: TEST THIS CHANGE NUMBER 0 & 1
 alias is_blocked = object.number[0]
 
 -- For c_falcon.
-alias initialized = object.number[0]
-alias is_banned = object.number[1]
+alias initialized = object.number[1]
+alias is_banned = object.number[2]
 alias grace_timer = object.timer[0]
 
 function initialize_falcon()
     alias c_falcon = current_object
 
-    c_falcon.is_blocked = 0
     c_falcon.is_banned = 0
     c_falcon.grace_timer = 0
     c_falcon.grace_timer.set_rate(0%)
@@ -599,9 +676,11 @@ end
 
 -- For blink_spawn
 alias blinkshot = object.object[0]
+
+-- For c_player
 alias blinkshot = player.object[0]
 
--- For killed_blink.number[0]
+-- For killed_blink
 alias delay = object.number[0]
 
 function blinkshot()
@@ -753,11 +832,11 @@ function comms()
                 c_comms.instance.set_waypoint_text("Comms")
                 c_comms.instance.set_waypoint_priority(low)
                 c_comms.instance.set_waypoint_range(0, 50)
-                c_comms.instance.set_scale(75)
+                c_comms.instance.set_scale(100)
             end
         
         inline: altif c_comms.team == team[1] and c_comms.is_of_type(hill_marker) then
-            c_comms.set_shape(cylinder, 30, 30, 10)
+            c_comms.set_shape(cylinder, 40, 20, 10)
             c_comms.set_shape_visibility(everyone)            
         end
     
@@ -779,23 +858,26 @@ end
 -- Comms.
 
 
+
+
+
 -- Main.
 on init: do
-    --qol_teleports()
+    qol_teleports()
 end
 
 do
-    --scaling_system()
-    --custom_teleports()
-    --push_teleports()
-    --qol_falcon()
-    --blinkshot()
-    --betrayers()
+    scaling_system()
+    custom_teleports()
+    push_teleports()
+    qol_falcon()
+    blinkshot()
+    betrayers()
     comms()
 end
 
 on object death: do
-    game.show_message_to(all_players, none, "Object killed")
+    --game.show_message_to(all_players, none, "Object killed")
 
     -- If the killer was a player.
     inline: if killer_player != no_player then
@@ -828,13 +910,13 @@ on object death: do
                                 c_health = c_falcon.health
 
                                 inline: if linked_comms.shape_contains(c_falcon) and c_health > 0 then
-                                    available = 1
+                                    available += 1
                                 end
                             end
                         end
 
-                        inline: if available == 1 then
-                            game.show_message_to(killer_player, none, "There are falcons")
+                        inline: if available >= 1 then
+                            game.show_message_to(killer_player, none, "Available falcons: %n", available)
                             
                         inline: altif available == 0 then
                             game.show_message_to(killer_player, none, "There are no falcons")
