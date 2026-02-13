@@ -132,15 +132,13 @@ enum scale_mode
 end
 
 function initialize_logic_controller()
-    for each object do
+    for each object with label "logic_controller" do
         if logic_controller == no_object then
             logic_controller = current_object
         end
-    end 
-    
-    logic_controller = logic_controller.place_at_me(flag_stand, "logic_controller", none, 0, 0, 127, none)
+    end
 
-    alias scale_mode_option = script_option[6]
+    alias scale_mode_option = script_option[7]
     if scale_mode_option == scale_mode.nothing then
         logic_controller.scale_system = scale_mode.nothing
     
@@ -791,12 +789,12 @@ alias linked_comms = object.object[0]
 alias instance = object.object[1]
 
 function link_comms()
-    for each object with label "comms" do
+    for each object with label "comms_spawn" do
         alias c_comms = allocate global.object
         c_comms = current_object
 
         inline: if c_comms.is_of_type(hill_marker) then
-            for each object with label "comms" do
+            for each object with label "comms_spawn" do
                 alias temp_comms = current_object
     
                 inline: if temp_comms.is_of_type(hill_marker) then
@@ -817,14 +815,14 @@ end
 function comms()
     link_comms()
 
-    for each object with label "comms" do
+    for each object with label "comms_spawn" do
         alias c_comms = current_object
 
         -- If the comms team is red team.
         inline: if c_comms.team == team[0] then
             -- If is a hill marker and doesnt have a saved comms instance.
             inline: if c_comms.is_of_type(hill_marker) and c_comms.instance == no_object then
-                c_comms.instance = c_comms.place_at_me(monitor, "comms_instance", none, 0, 0, 0, none)
+                c_comms.instance = c_comms.place_at_me(monitor, "comms", none, 0, 0, 0, none)
         
                 -- Initialize comms.
                 c_comms.instance.remove_weapon(primary, true)
@@ -963,8 +961,8 @@ on object death: do
                 killer_player.blinkshot = killed_object.place_at_me(hill_marker, "blinkshot", none, 0, 0, 0, none)
             
             -- If a comms instance was killed.
-            inline: altif killed_object.has_forge_label("comms_instance") then
-                for each object with label "comms" do
+            inline: altif killed_object.has_forge_label("comms") then
+                for each object with label "comms_spawn" do
                     alias c_comms = current_object
 
                     -- If this is a collector comms and its instance was killed.
@@ -1018,8 +1016,8 @@ alias opt_flag_reset_time      = script_option[1]
 alias opt_sides                = script_option[2] -- see (sides) enum
 alias opt_flag_at_home         = script_option[3]
 alias opt_carrier_cooldown     = script_option[4]
-alias opt_flag_preserve_radius = script_option[6] -- range option; not visible in UI; defaults to 20
-alias opt_lead_to_win          = script_option[7] -- Lead to win
+alias opt_flag_preserve_radius = script_option[5] -- range option; not visible in UI; defaults to 20
+alias opt_lead_to_win          = script_option[6] -- Lead to win
 -- script_option[5] is an unused range option; not visible in UI; defaults to 7
 
 -- Unnamed Forge labels:

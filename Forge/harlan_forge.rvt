@@ -698,12 +698,12 @@ alias linked_comms = object.object[0]
 alias instance = object.object[1]
 
 function link_comms()
-    for each object with label "comms" do
+    for each object with label "comms_spawn" do
         alias c_comms = allocate global.object
         c_comms = current_object
 
         inline: if c_comms.is_of_type(hill_marker) then
-            for each object with label "comms" do
+            for each object with label "comms_spawn" do
                 alias temp_comms = current_object
     
                 inline: if temp_comms.is_of_type(hill_marker) then
@@ -724,14 +724,14 @@ end
 function comms()
     link_comms()
 
-    for each object with label "comms" do
+    for each object with label "comms_spawn" do
         alias c_comms = current_object
 
         -- If the comms team is red team.
         inline: if c_comms.team == team[0] then
             -- If is a hill marker and doesnt have a saved comms instance.
             inline: if c_comms.is_of_type(hill_marker) and c_comms.instance == no_object then
-                c_comms.instance = c_comms.place_at_me(monitor, "comms_instance", none, 0, 0, 0, none)
+                c_comms.instance = c_comms.place_at_me(monitor, "comms", none, 0, 0, 0, none)
         
                 -- Initialize comms.
                 c_comms.instance.remove_weapon(primary, true)
@@ -1062,8 +1062,8 @@ on object death: do
             inline: if killed_object.has_forge_label("blinkshot") then
                 killer_player.blinkshot = killed_object.place_at_me(hill_marker, none, none, 0, 0, 0, none)
             
-            inline: altif killed_object.has_forge_label("comms_instance") then
-                for each object with label "comms" do
+            inline: altif killed_object.has_forge_label("comms") then
+                for each object with label "comms_spawn" do
                     alias c_comms = current_object
 
                     -- If this is a collector comms and its instance was killed.
