@@ -1,0 +1,837 @@
+-- Harlan 2.0 Alpha
+
+enum sides
+   multi
+   one
+   neutral
+end
+
+alias opt_flag_return_time = script_option[0]
+alias opt_flag_reset_time  = script_option[1]
+alias opt_sides            = script_option[2] -- see (sides) enum
+alias opt_flag_at_home     = script_option[3]
+alias opt_carrier_cooldown = script_option[4]
+alias opt_flag_zone_radius = script_option[6] -- range option; not visible in UI; defaults to 20
+alias opt_lead_to_win      = script_option[7] -- Lead to win
+-- script_option[5] is an unused range option; not visible in UI; defaults to 7
+
+-- Unnamed Forge labels:
+alias all_flags = 0
+
+alias carrier_traits  = script_traits[0]
+alias cooldown_traits = script_traits[1]
+
+alias ui_alert = script_widget[0]
+
+alias captures   = player.script_stat[0]
+alias carry_time = player.script_stat[1]
+alias returns    = player.script_stat[2]
+
+enum flag_state
+   at_home
+   carried
+   dropped
+end
+
+alias sudden_death_enabled        = global.number[0]
+alias announced_sudden_death      = global.number[1]
+alias any_flag_is_being_preserved = global.number[2] -- is set, but nothing ever uses it
+
+alias announced_game_start       = player.number[0]
+alias is_returning_flag          = player.number[1]
+alias carrier_cooldown_timer     = player.timer[0]
+alias carry_time_update_interval = player.timer[1]
+alias announce_start_timer       = player.timer[2]
+
+alias state                 = object.number[0] -- flag state; see (flag_state) enum
+alias announced_flag_take   = object.number[2]
+alias announced_flag_drop   = object.number[3]
+alias zone                  = object.object[0] -- flag zone; boundary centered on flag
+alias last_carrier          = object.player[0]
+alias reset_timer           = object.timer[0]
+alias return_timer          = object.timer[1]
+alias notification_throttle = object.timer[2]
+
+alias flag_point = team.object[0] -- spawn and drop point
+alias flag       = team.object[1]
+
+declare sudden_death_enabled   with network priority local
+declare announced_sudden_death with network priority local
+declare any_flag_is_being_preserved with network priority low
+declare global.number[3] with network priority local
+declare global.number[4] with network priority local
+declare global.object[0] with network priority local
+declare global.object[1] with network priority local
+declare global.player[0] with network priority local
+declare global.player[1] with network priority local
+declare global.team[0] with network priority local
+
+declare player.announced_game_start with network priority low
+declare player.is_returning_flag with network priority low
+declare player.carry_time_update_interval = 1
+declare player.announce_start_timer = 5
+
+declare object.state with network priority low
+declare object.number[1] with network priority low = 1 -- unused
+declare object.announced_flag_take with network priority local
+declare object.announced_flag_drop with network priority local
+declare object.zone with network priority low
+declare object.last_carrier with network priority low
+declare object.reset_timer  = opt_flag_reset_time
+declare object.return_timer = opt_flag_return_time
+declare object.notification_throttle = 3
+
+declare team.flag_point with network priority low
+declare team.flag       with network priority low
+
+do
+    sudden_death_enabled = 0
+end
+
+on pregame: do
+    game.symmetry = 1
+    if opt_sides == sides.one then 
+        game.symmetry = 0
+    end
+end
+
+function loadout_palettes()
+    for each player do
+        if current_player.is_elite() then 
+            current_player.set_loadout_palette(elite_tier_1)
+        end
+
+        if not current_player.is_elite() then 
+            current_player.set_loadout_palette(spartan_tier_1)
+        end
+    end
+end
+
+function round_card()
+    for each player do
+        current_player.announce_start_timer.set_rate(-100%)
+
+        if opt_sides == sides.one and current_player.team == team[1] then 
+            current_player.set_objective_text("Capture the enemy flag.\r\n%n rounds.", game.round_limit)
+            current_player.set_objective_allegiance_name("Offense")
+            current_player.set_objective_allegiance_icon(attack)
+        end
+
+        if opt_sides == sides.one and current_player.team == team[0] then 
+            current_player.set_objective_text("Defend your flag.\r\n%n rounds.", game.round_limit)
+            current_player.set_objective_allegiance_name("Defense")
+            current_player.set_objective_allegiance_icon(defend)
+        end
+
+        if game.score_to_win != 0 and opt_sides == sides.neutral or opt_sides == sides.multi then 
+            if opt_lead_to_win > 0 then -- Lead to win
+                current_player.set_objective_text("Capture the flag.\r\n%n point lead or %n points to win.", opt_lead_to_win, game.score_to_win)
+            end
+            
+            if opt_lead_to_win == 0 then
+                current_player.set_objective_text("Capture the flag.\r\n%n points to win.", game.score_to_win)
+            end
+        end
+
+        if game.score_to_win == 0 and opt_sides == sides.neutral or opt_sides == sides.multi then 
+            if opt_lead_to_win > 0 then -- Lead to win
+                current_player.set_objective_text("Capture the flag.\r\n%n point lead to win.", opt_lead_to_win)
+            end
+
+            if opt_lead_to_win == 0 then
+                current_player.set_objective_text("Capture the flag.")
+            end
+        end
+    end
+end
+
+-- set up UI and announce game start
+function game_announces()
+    for each player do
+        if current_player.announced_game_start == 0 then
+            ui_alert.set_text("PRE-RELEASE FOR TESTING ONLY")
+            ui_alert.set_visibility(current_player, true)
+
+            if current_player.announce_start_timer.is_zero() then
+                send_incident(ctf_game_start, current_player, no_player)
+                current_player.announced_game_start = 1
+
+                if opt_sides == sides.one and current_player.team == team[1] then 
+                    send_incident(team_offense, current_player, no_player)
+                end
+
+                if opt_sides == sides.one and current_player.team == team[0] then 
+                    send_incident(team_defense, current_player, no_player)
+                end
+            end
+        end
+
+        if current_player.announced_game_start == 1 and current_player.biped != no_object then
+            current_player.announced_game_start = 2
+        end
+
+        if current_player.announced_game_start == 2 then
+            ui_alert.set_text("Your flag must be at home to score!")
+            ui_alert.set_visibility(current_player, false)
+        end
+    end
+end
+
+-- initial setup for flag spawn/drop point
+function setup_flags_drop_points()
+    for each team do 
+        if current_team.flag_point == no_object then 
+            for each object with label "ctf_flag_return" do
+                if current_team.flag_point == no_object and current_object.team == current_team then 
+                    current_team.flag_point = current_object
+                    current_object.set_waypoint_visibility(allies)
+                    current_object.set_waypoint_icon(diamond)
+                end
+            end
+        end
+    end
+end
+
+-- spawn flags as needed
+function setup_flag_instances()
+    for each team do 
+        current_team.flag.set_waypoint_visibility(everyone)
+
+        if  current_team == neutral_team
+            or  current_team.has_any_players()
+            and current_team.flag == no_object
+            and current_team.flag_point != no_object
+        then
+            alias should_spawn_flag = global.number[3]
+            should_spawn_flag = 0
+
+            if  opt_sides == sides.multi 
+                and current_team != neutral_team 
+                and current_team.has_any_players() 
+            then 
+                should_spawn_flag = 1
+            end
+
+            if opt_sides == sides.one and current_team == team[0] then 
+                team[1].flag_point.set_waypoint_visibility(everyone)
+                team[0].flag_point.set_waypoint_visibility(no_one)
+                should_spawn_flag = 1
+            end
+
+            if opt_sides == sides.neutral and current_team == neutral_team then 
+                should_spawn_flag = 1
+            end
+
+            if should_spawn_flag == 1 then 
+                if opt_sides == sides.one or opt_sides == sides.neutral then
+                    --
+                    -- If this is One Flag or Neutral Flag, see if there is an existing flag
+                    -- and if so, take ownership of it.
+                    --
+                    for each object do
+                        if current_object.is_of_type(flag) then 
+                            current_team.flag = current_object
+                            should_spawn_flag = 0
+                        end
+                    end
+                end
+
+                if opt_sides == sides.multi then
+                    --
+                    -- If this is Multi Flag and the flag somehow tests as unowned, take
+                    -- ownership of it.
+                    --
+                    for each object do
+                        if current_object.is_of_type(flag) and should_spawn_flag == 1 then 
+                            alias is_unowned = global.number[4]
+                            alias current_carrier = global.player[1]
+                            
+                            is_unowned = 1
+                            do -- check if flag carrier is on this team
+                                current_carrier = no_player
+                                current_carrier = current_object.get_carrier()
+
+                                if  current_carrier != no_player 
+                                    and current_carrier.team == current_team then 
+                                    is_unowned = 0 -- don't take ownership of an enemy flag being carried by one of our players
+                                end
+                            end
+
+                            for each team do
+                                if current_team.flag == current_object then 
+                                    is_unowned = 0
+                                end
+                            end
+
+                            if is_unowned == 1 then 
+                                current_team.flag = current_object
+                                should_spawn_flag = 0
+                            end
+                        end
+                    end
+                end
+
+                if should_spawn_flag == 1 then 
+                    current_team.flag = current_team.flag_point.place_at_me(flag, none, never_garbage_collect, 0, 0, 3, none)
+                end
+                
+                alias current_flag = global.object[0]
+                current_flag = current_team.flag
+
+                if should_spawn_flag == 0 then 
+                    current_flag.state = flag_state.carried
+                end
+
+                current_flag.team = current_team
+                current_team.flag.set_pickup_permissions(enemies)
+                current_team.flag.set_weapon_pickup_priority(high)
+                current_team.flag.set_waypoint_icon(flag)
+                current_team.flag.set_waypoint_priority(high)
+                current_flag.set_shape(cylinder, 7, 6, 3)
+
+                if opt_sides == sides.neutral then 
+                    current_team.flag.set_pickup_permissions(everyone)
+                end
+            end
+        end
+    end
+end
+
+-- clear scripted player waypoints
+function clear_player_waypoints()
+    for each player do 
+    current_player.biped.set_waypoint_icon(none)
+    end
+end
+
+-- manage flag carrier, flag state, flag waypoint, flag captures, etc.
+function process_flag_states()
+    for each team do 
+        alias current_flag = global.object[0]
+        alias flag_carrier = global.player[1]
+        
+        current_flag = current_team.flag
+        flag_carrier = no_player
+        any_flag_is_being_preserved = 0
+        flag_carrier = current_flag.get_carrier()
+
+        -- remember flag carrier, confer traits, and track carry time
+        if flag_carrier != no_player then 
+            current_flag.last_carrier = flag_carrier
+            flag_carrier.apply_traits(carrier_traits)
+            flag_carrier.carry_time_update_interval.set_rate(-100%)
+
+            if flag_carrier.carry_time_update_interval.is_zero() then 
+                flag_carrier.carry_time += 1
+                flag_carrier.carry_time_update_interval.reset()
+            end
+        end
+
+        -- manage carried flag: waypoint, state, capture check
+        if flag_carrier != no_player then 
+            alias carrier_team = global.team[0]
+            alias flag_zone    = global.object[1]
+            
+            flag_zone = current_flag.zone
+            current_flag.set_waypoint_visibility(no_one)
+            flag_carrier.biped.set_waypoint_icon(flag)
+            current_flag.state = flag_state.carried
+            current_flag.reset_timer = opt_flag_reset_time
+            flag_zone.return_timer = opt_flag_return_time
+            flag_zone.set_progress_bar(object.return_timer, no_one)
+            sudden_death_enabled = 1
+            flag_carrier.carrier_cooldown_timer = opt_carrier_cooldown
+            carrier_team = flag_carrier.team
+
+            -- handle flag capture
+            if carrier_team.flag_point.shape_contains(flag_carrier.biped) then 
+                alias capture_is_allowed = global.number[3]
+                alias carrier_team_flag  = global.object[1]
+                
+                capture_is_allowed = 1
+                ui_alert.set_visibility(flag_carrier, false)
+
+                -- enforce Flag At Home
+                if opt_flag_at_home == 1 and opt_sides == sides.multi then 
+                    carrier_team_flag = carrier_team.flag
+
+                    if carrier_team_flag.state != flag_state.at_home then 
+                        capture_is_allowed = 0
+                        ui_alert.set_visibility(flag_carrier, true)
+                    end
+                end
+
+                if capture_is_allowed == 1 then 
+                    flag_carrier.score += 1
+                    flag_carrier.captures += 1
+                    current_team.flag.delete()
+                    send_incident(flag_scored, flag_carrier, all_players)
+
+                    -- Lead to win
+                    if opt_lead_to_win > 0 then
+                        alias is_odd = allocate global.number
+                        alias lead_score = allocate global.number
+
+                        is_odd = game.current_round
+                        is_odd %= 2
+
+                        lead_score = team[0].score
+                        lead_score -= team[1].score
+
+                        if lead_score > 0 then
+                            if is_odd == 0 then
+                                game.show_message_to(all_players, none, "Red team has a %n point lead!", lead_score)
+                            end
+
+                            if is_odd != 0 then
+                                game.show_message_to(all_players, none, "Blue team has a %n point lead!", lead_score)
+                            end
+
+                            if lead_score >= opt_lead_to_win then
+                                game.end_round()
+                            end
+                        end
+
+                        lead_score = team[1].score
+                        lead_score -= team[0].score
+
+                        if lead_score > 0 then
+                            if is_odd == 0 then
+                                game.show_message_to(all_players, none, "Blue team has a %n point lead!", lead_score)
+                            end
+
+                            if is_odd != 0 then
+                                game.show_message_to(all_players, none, "Red team has a %n point lead!", lead_score)
+                            end
+
+                            if lead_score >= opt_lead_to_win then
+                                game.end_round()
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        -- flag was just dropped
+        if flag_carrier == no_player and current_flag.state == flag_state.carried then
+            alias flag_zone = global.object[1]
+
+            flag_zone = current_flag.zone 
+            current_flag.state = flag_state.dropped
+
+            if opt_flag_return_time != 1 then 
+                flag_zone.set_progress_bar(object.return_timer, allies)
+            end
+
+            current_flag.set_waypoint_icon(flag)
+            current_flag.set_waypoint_visibility(everyone)
+            current_team.flag.set_waypoint_priority(high)
+        end
+    end
+end
+
+-- handle flag returns and resets
+function process_flag_recovery()
+    for each team do 
+        alias current_flag    = global.object[0]
+        alias flag_zone       = global.object[1]
+        alias returning_count = global.number[3]
+        
+        current_flag = current_team.flag
+        flag_zone = current_flag.zone
+
+        if  current_flag != no_object 
+            and current_flag.state == flag_state.dropped 
+            or current_flag.state == 3 
+        then 
+            current_flag.reset_timer.set_rate(-100%)
+            flag_zone.return_timer.set_rate(100%)
+            --
+            -- Identify players returning the flag:
+            --
+            returning_count = 0
+            for each player do
+                alias temp_object = allocate temporary object
+                current_player.is_returning_flag = 0
+
+                if current_player.team == current_team and flag_zone.shape_contains(current_player.biped) then
+                    temp_object = no_object
+                    temp_object = current_player.get_vehicle()
+
+                    if temp_object == no_object then
+                        current_player.is_returning_flag = 1
+                        returning_count += 1
+                        temp_object = no_object
+                        temp_object = current_player.get_weapon(primary)
+
+                        if temp_object != no_object and temp_object.is_of_type(flag) then
+                            returning_count += 2 -- flag carrier is equivalent to 3 players
+                        end
+                    end
+                end
+            end
+
+            if returning_count > 0 then
+                flag_zone.return_timer.set_rate(-100%)
+
+                if returning_count > 1 then
+                    flag_zone.return_timer.set_rate(-150%)
+
+                    if returning_count > 2 then
+                        flag_zone.return_timer.set_rate(-200%)
+                    end
+                end
+
+                if opt_flag_return_time == 1 then
+                    flag_zone.return_timer.set_rate(-1000%)
+                end
+
+                -- blink the flag's waypoint if it's being returned
+                current_flag.set_waypoint_priority(blink)
+            end
+
+            -- otherwise do not blink the flag's waypoint
+            if returning_count == 0 then
+                current_flag.set_waypoint_priority(high)
+            end
+
+            -- blink the flag's waypoint when it's about to reset
+            for each object with label all_flags do 
+                if current_object.reset_timer < 6 then 
+                    current_object.set_waypoint_priority(blink)
+                end
+            end
+            --
+            -- Carry out resets and returns as appropriate:
+            --
+            if  current_flag.is_out_of_bounds() 
+                or current_flag.reset_timer.is_zero() 
+            then -- carry out the reset
+                current_flag.delete()
+
+                if opt_sides == sides.neutral then 
+                    send_incident(flag_reset_neutral, current_flag.last_carrier, current_team)
+                end
+
+                if opt_sides != sides.neutral then 
+                    send_incident(flag_reset, current_team, current_team)
+                end
+            end
+
+            -- carry out the return
+            if flag_zone.return_timer.is_zero() then 
+                current_flag.delete()
+                send_incident(flag_recovered, current_team, current_team)
+
+                -- credit players for returning flags
+                for each player do 
+                    if current_player.is_returning_flag == 1 and current_player.team == current_team then 
+                        current_player.returns += 1
+                        current_player.is_returning_flag = 0
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- send incidents for the flag being taken or dropped
+function process_flag_notifications()
+    for each team do 
+        alias current_flag    = global.object[0]
+        alias current_carrier = global.player[1]
+        alias carrier_biped   = global.object[1]
+        
+        current_flag    = current_team.flag
+        carrier_biped   = current_flag.last_carrier.biped
+        current_carrier = current_flag.last_carrier
+        current_flag.notification_throttle.set_rate(-100%)
+
+        if current_flag.notification_throttle.is_zero() then 
+            if  current_flag.state == flag_state.dropped 
+                and current_flag.announced_flag_drop != 1 
+            then 
+                current_flag.announced_flag_drop = 1
+
+                if opt_sides == sides.neutral then 
+                    send_incident(flag_dropped_neutral, current_flag.last_carrier, current_team)
+                end
+
+                if opt_sides != sides.neutral then 
+                    send_incident(flag_dropped, current_flag.last_carrier, current_team)
+                end
+
+                current_flag.notification_throttle.reset()
+            end
+
+            if  current_flag.state == flag_state.carried 
+                and current_flag.announced_flag_take != 1 
+            then 
+                current_flag.announced_flag_take = 1
+
+                if opt_sides == sides.neutral then 
+                    send_incident(flag_grabbed_neutral, current_carrier, current_team)
+                end
+
+                if opt_sides != sides.neutral then 
+                    send_incident(flag_grabbed, current_carrier, current_team)
+                end
+
+                current_flag.notification_throttle.reset()
+            end
+
+            if current_flag.state != flag_state.carried then 
+                current_flag.announced_flag_take = 0
+            end
+
+            if  current_flag.state == flag_state.carried 
+                or current_flag.state == flag_state.at_home 
+            then 
+                current_flag.announced_flag_drop = 0
+            end
+        end
+    end
+end
+
+-- carrier cooldown traits
+function manage_carrier_cooldown()
+    for each player do 
+        alias current_biped  = global.object[0]
+        alias current_weapon = global.object[1]
+        current_biped = current_player.biped
+
+        if not current_biped == no_object then 
+            current_weapon = no_object
+            current_weapon = current_player.get_weapon(primary)
+            
+            if  not current_weapon.is_of_type(flag) 
+                and current_player.carrier_cooldown_timer > 0 
+            then 
+                current_player.carrier_cooldown_timer.set_rate(-100%)
+
+                if not current_player.carrier_cooldown_timer.is_zero() then 
+                    current_player.apply_traits(cooldown_traits)
+                end
+            end
+        end
+    end
+end
+
+-- handle the carrier being killed
+function handle_carrier_death()
+    for each team do 
+        alias current_flag = global.object[0]
+        alias killer       = global.player[0]
+        
+        if current_team.has_any_players() then 
+            current_flag = current_team.flag
+
+            for each player do
+                if current_flag.last_carrier.killer_type_is(kill) then 
+                    killer = current_flag.last_carrier.try_get_killer()
+                    send_incident(flagcarrier_kill, killer, current_flag.last_carrier)
+                    current_flag.last_carrier = no_player
+                end
+            end
+        end
+    end
+end
+
+-- create a boundary for each flag
+function initialize_flag_proximity_zones()
+    for each object with label all_flags do
+        alias flag_zone = global.object[0]
+
+        if current_object.zone == no_object then 
+            current_object.zone = current_object.place_at_me(hill_marker, none, never_garbage_collect | suppress_effect, 0, 0, 0, none)
+            flag_zone = current_object.zone
+            flag_zone.set_shape(cylinder, opt_flag_zone_radius, 10, 10)
+            flag_zone.set_shape_visibility(no_one)
+            flag_zone.attach_to(current_object, 0, 0, 0, relative)
+            flag_zone.team = current_object.team
+        end
+    end
+end
+
+-- show boundary when flag is dropped and stationary
+function update_flag_zone_visibility()
+    for each object with label all_flags do
+        alias current_flag = global.object[0]
+        alias flag_speed   = global.number[3]
+
+        current_flag = current_object
+        current_flag.zone.set_shape_visibility(no_one)
+        if current_flag.state == flag_state.dropped then
+            flag_speed = current_flag.get_speed()
+            if flag_speed == 0 then
+                current_flag.zone.set_shape_visibility(everyone)
+            end
+        end
+    end
+end
+
+-- handle preserve boundaries (One Flag)
+function process_flag_preservation()
+    for each object with label all_flags do 
+        alias current_flag = global.object[0]
+        
+        if opt_sides == sides.one then 
+            current_flag = current_object
+
+            for each player do
+                if  current_player.team != current_flag.team
+                    and current_flag.zone.shape_contains(current_player.biped) 
+                then 
+                    any_flag_is_being_preserved = 1
+                    current_flag.reset_timer.set_rate(0%)
+                end
+            end
+        end
+    end
+end
+
+-- detect a flag being dropped (clear last_carrier when no longer carried)
+function cleanup_flag_carrier_references()
+    for each object with label all_flags do 
+        alias current_flag    = global.object[0]
+        alias current_carrier = global.player[1]
+        current_flag = current_object
+
+        if current_flag.last_carrier != no_player then 
+            for each player do
+                if current_player == current_flag.last_carrier then 
+                    current_carrier = no_player
+                    current_carrier = current_flag.get_carrier()
+
+                    if current_carrier == no_player then 
+                        current_flag.last_carrier = no_player
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- manage CTF spawn zones
+function update_dynamic_spawn_zones()
+    for each team do 
+        alias current_flag = global.object[0]
+        
+        if current_team.has_any_players() then 
+            current_flag = current_team.flag
+            
+            if not current_flag == no_object then 
+                for each object with label "ctf_res_zone" do
+                    if current_object.team == current_team then 
+                        current_object.enable_spawn_zone(0)
+                        current_object.set_shape_visibility(no_one)
+                        current_object.set_invincibility(1)
+                        current_object.set_pickup_permissions(no_one)
+
+                        if current_flag.state == flag_state.at_home then 
+                            current_object.enable_spawn_zone(1)
+                        end
+                    end
+                end
+
+                for each object with label "ctf_res_zone_away" do
+                    if current_object.team == current_team then 
+                        current_object.enable_spawn_zone(0)
+                        current_object.set_shape_visibility(no_one)
+                        current_object.set_invincibility(1)
+                        current_object.set_pickup_permissions(no_one)
+                        
+                        if current_flag.state != flag_state.at_home then 
+                            current_object.enable_spawn_zone(1)
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- delete a team's flag if all of their players quit and their flag is at home
+function cleanup_empty_team_flags()
+    for each team do 
+        alias current_flag = global.object[0]
+        
+        if  current_team != neutral_team 
+            and not current_team.has_any_players() 
+            and current_team.flag != no_object 
+        then 
+            current_flag = current_team.flag
+
+            if current_flag.state == flag_state.at_home then 
+                current_team.flag.delete()
+                current_team.flag = no_object
+            end
+        end
+    end
+end
+
+function manage_round_termination()
+    -- Manage round timer:
+    if not game.round_timer.is_zero() then 
+        game.grace_period_timer = 0
+    end
+
+    if game.round_time_limit > 0 then 
+        if not game.round_timer.is_zero() then 
+            announced_sudden_death = 0
+        end
+
+        if game.round_timer.is_zero() then 
+            if sudden_death_enabled == 1 then 
+                game.sudden_death_timer.set_rate(-100%)
+                game.grace_period_timer.reset()
+
+                if announced_sudden_death == 0 then 
+                    send_incident(sudden_death, all_players, all_players)
+                    announced_sudden_death = 1
+                end
+
+                if  game.sudden_death_time > 0 
+                    and game.grace_period_timer > game.sudden_death_timer 
+                then 
+                    game.grace_period_timer = game.sudden_death_timer
+                end
+            end
+
+            if sudden_death_enabled == 0 then 
+                game.grace_period_timer.set_rate(-100%)
+
+                if game.grace_period_timer.is_zero() then 
+                    game.end_round()
+                end
+            end
+
+            if game.sudden_death_timer.is_zero() then 
+                game.end_round()
+            end
+        end
+    end
+end
+
+-- Main.
+do
+    loadout_palettes()
+    round_card()
+    game_announces()
+    setup_flags_drop_points()
+    setup_flag_instances()
+    clear_player_waypoints()
+    process_flag_states()
+    process_flag_recovery()
+    process_flag_notifications()
+    manage_carrier_cooldown()
+    handle_carrier_death()
+    initialize_flag_proximity_zones()
+    update_flag_zone_visibility()
+    process_flag_preservation()
+    cleanup_flag_carrier_references()
+    update_dynamic_spawn_zones()
+    cleanup_empty_team_flags()
+    manage_round_termination()
+end
