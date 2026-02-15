@@ -22,6 +22,8 @@
 -- CARRIER MELEE HEAL: optional melee health & shields restore for flag carrier kills.
 -- QOL TELEPORTS: teleporter waypoints with helpful text.
 -- QOL FALCON: notify players when falcons have spawned.
+-- BETRAYERS: system that penalizes players who have committed more than a certain number of betrayals.
+-- MVP: system that shows in the event-feed who the highest rated player is.
 --------------------------------------------------------------------------------
 
 alias FLAG_ZONE_RADIUS = 20
@@ -867,25 +869,31 @@ end
 -- optional melee health & shields restore for flag carrier kills.
 --------------------------------------------------------------------------------
 if opt_melee_heal == 1 then
-   for each player do
-      alias killer = global.player[0]
-      alias weapon = global.object[0]
+    for each player do
+        alias killer = global.player[0]
+        alias weapon = global.object[0]
 
-      if current_player.killer_type_is(kill) then
-         killer = no_player
-         killer = current_player.try_get_killer()
+        if current_player.killer_type_is(kill) then
+            killer = no_player
+            killer = current_player.try_get_killer()
 
-         if killer != no_player then
-            weapon = no_object
-            weapon = killer.get_weapon(primary)
+            if killer != no_player then
+                weapon = no_object
+                weapon = killer.get_weapon(primary)
 
-            if weapon != no_object and weapon.is_of_type(flag) then
-               killer.biped.shields = 100 -- TODO what if carrier has overshield?
-               killer.biped.health = 100
+                if weapon != no_object and weapon.is_of_type(flag) then
+                    alias c_shields = allocate temporary number
+                    c_shields = killer.biped.shields
+
+                    if c_shields < 100 then
+                        killer.biped.shields = 100 -- TODO what if carrier has overshield?
+                    end
+                    
+                    killer.biped.health = 100
+                end
             end
-         end
-      end
-   end
+        end
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -1067,5 +1075,73 @@ do
                 game.show_message_to(all_players, none, "Falcon spawned in Island")
             end
         end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- BETRAYERS:
+-- system that penalizes players who have committed more than a certain number of betrayals.
+--------------------------------------------------------------------------------
+alias trait_betrayers = script_traits[2]
+alias betrayals = player.number[2]
+
+for each player do
+    alias c_player = current_player
+
+    -- If the current player was killed by a teammate
+    inline: if c_player.killer_type_is(betrayal) then 
+        alias c_betrayer = allocate temporary player
+
+        -- Save the betrayer on a global player
+        c_betrayer = c_player.try_get_killer()
+
+        inline: if c_player.betrayals < 3 then 
+            -- Increase the betrayals of the betrayer
+            c_betrayer.betrayals += 1
+
+            -- If the betrayer betrayals is less than 4
+            inline: if c_betrayer.betrayals < 4 then 
+                game.show_message_to(all_players, none, "Teamkilling is not allowed, %n!", c_betrayer)
+            end
+
+            inline: if c_betrayer.betrayals >= 4 then 
+                c_betrayer.biped.set_waypoint_text("Betrayer")
+                c_betrayer.biped.set_waypoint_visibility(everyone)
+
+                -- Warn all the players
+                game.show_message_to(all_players, none, "%n has been penalized for teamkilling", c_betrayer)
+            end
+        end
+    end
+
+    inline: if c_player.betrayals == 4 then 
+        -- Apply the punishment
+        c_player.apply_traits(trait_betrayers)
+
+        c_player.biped.remove_weapon(primary, true)
+        c_player.biped.remove_weapon(secondary, true)
+        
+        c_player.frag_grenades = 0
+        c_player.plasma_grenades = 0
+    end
+end
+
+--------------------------------------------------------------------------------
+-- MVP:
+-- system that shows in the event-feed who the highest rated player is.
+--------------------------------------------------------------------------------
+declare global.player[2] with network priority low
+alias mvp = global.player[2]
+
+for each player do
+    alias c_player = current_player
+
+    if mvp == no_player then
+        mvp = c_player
+    end
+
+    if c_player.rating > mvp.rating and c_player != mvp then
+        game.show_message_to(all_players, none, "%n is the current MVP!", c_player)
+        mvp = c_player
     end
 end
