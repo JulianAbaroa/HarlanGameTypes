@@ -9,7 +9,7 @@ alias opt_flag_reset_time      = script_option[1]
 alias opt_sides                = script_option[2] -- see (sides) enum
 alias opt_flag_at_home         = script_option[3]
 alias opt_carrier_cooldown     = script_option[4]
-alias opt_flag_preserve_radius = script_option[6] -- range option; not visible in UI; defaults to 20
+alias opt_flag_preserve_radius = script_option[5] -- range option; not visible in UI; defaults to 20
 -- script_option[5] is an unused range option; not visible in UI; defaults to 7
 
 -- Unnamed Forge labels:
