@@ -1,5 +1,6 @@
 -- Harlan 2.0 Alpha
 --------------------------------------------------------------------------------
+-- HARLAN VERSION: detect harlan_version object for compatibility checks.
 -- ODD ROUND: determine if round is odd-numbered so team names can be switched.
 -- QOL TELEPORTS: teleporter waypoints with helpful text.
 --------------------------------------------------------------------------------
@@ -28,7 +29,7 @@
 -- MVP: system that shows in the event-feed who the highest rated player is.
 --------------------------------------------------------------------------------
 
-alias VERSION = 0
+alias VERSION = 1
 alias FLAG_ZONE_RADIUS = 20
 
 enum map_areas
@@ -84,6 +85,7 @@ alias sudden_death_enabled        = global.number[0]
 alias announced_sudden_death      = global.number[1]
 alias any_flag_is_being_preserved = global.number[2] -- is set, but nothing ever uses it
 alias odd_round                   = global.number[5]
+alias harlan_version              = global.object[2]
 alias mvp                         = global.player[2]
 
 alias announced_game_start       = player.number[0]
@@ -113,6 +115,7 @@ declare global.number[4] with network priority local
 declare odd_round with network priority local
 declare global.object[0] with network priority local
 declare global.object[1] with network priority local
+declare harlan_version with network priority local
 declare global.player[0] with network priority local
 declare global.player[1] with network priority local
 declare mvp with network priority low
@@ -150,6 +153,15 @@ end
 
 on init: do
     ----------------------------------------------------------------------------
+    -- HARLAN VERSION:
+    -- detect harlan_version object for compatibility checks.
+    ----------------------------------------------------------------------------
+    harlan_version = no_object
+    for each object with label "harlan_version" do
+        harlan_version = current_object
+    end
+    
+    ----------------------------------------------------------------------------
     -- ODD ROUND:
     -- determine if round is odd-numbered so team names can be switched.
     ----------------------------------------------------------------------------
@@ -173,65 +185,67 @@ on init: do
             c_teleport.set_waypoint_visibility(everyone)
             c_teleport.set_waypoint_priority(low)
             c_teleport.set_waypoint_range(0, 20)
+            
+            if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
+                if c_teleport.spawn_sequence == map_areas.middle then
+                    c_teleport.set_waypoint_text("Middle")
+                end
 
-            if c_teleport.spawn_sequence == map_areas.middle then
-                c_teleport.set_waypoint_text("Middle")
-            end
+                if c_teleport.spawn_sequence == map_areas.valley then
+                    c_teleport.set_waypoint_text("Valley")
+                end
 
-            if c_teleport.spawn_sequence == map_areas.valley then
-                c_teleport.set_waypoint_text("Valley")
-            end
-
-            if c_teleport.spawn_sequence == map_areas.hangar then
-                c_teleport.set_waypoint_text("Hangar")
-            end
-            
-            if c_teleport.spawn_sequence == map_areas.sea_red then
-                if odd_round == 0 then
-                    c_teleport.set_waypoint_text("Sea Red")
-                alt
-                    c_teleport.set_waypoint_text("Sea Blue")
+                if c_teleport.spawn_sequence == map_areas.hangar then
+                    c_teleport.set_waypoint_text("Hangar")
                 end
-            end
-            
-            if c_teleport.spawn_sequence == map_areas.sea_blue then
-                if odd_round == 0 then
-                    c_teleport.set_waypoint_text("Sea Blue")
-                alt
-                    c_teleport.set_waypoint_text("Sea Red")
+                
+                if c_teleport.spawn_sequence == map_areas.sea_red then
+                    if odd_round == 0 then
+                        c_teleport.set_waypoint_text("Sea Red")
+                    alt
+                        c_teleport.set_waypoint_text("Sea Blue")
+                    end
                 end
-            end
-            
-            if c_teleport.spawn_sequence == map_areas.red_base then
-                if odd_round == 0 then
-                    c_teleport.set_waypoint_text("Red Base")
-                alt
-                    c_teleport.set_waypoint_text("Blue Base")
+                
+                if c_teleport.spawn_sequence == map_areas.sea_blue then
+                    if odd_round == 0 then
+                        c_teleport.set_waypoint_text("Sea Blue")
+                    alt
+                        c_teleport.set_waypoint_text("Sea Red")
+                    end
                 end
-            end
-            
-            if c_teleport.spawn_sequence == map_areas.blue_base then
-                if odd_round == 0 then
-                    c_teleport.set_waypoint_text("Blue Base")
-                alt
-                    c_teleport.set_waypoint_text("Red Base")
+                
+                if c_teleport.spawn_sequence == map_areas.red_base then
+                    if odd_round == 0 then
+                        c_teleport.set_waypoint_text("Red Base")
+                    alt
+                        c_teleport.set_waypoint_text("Blue Base")
+                    end
                 end
-            end
-            
-            if c_teleport.spawn_sequence == map_areas.centre_island then
-                c_teleport.set_waypoint_text("Island")
-            end
-            
-            if c_teleport.spawn_sequence == map_areas.up then
-                c_teleport.set_waypoint_text("Up")
-            end
-            
-            if c_teleport.spawn_sequence == map_areas.down then
-                c_teleport.set_waypoint_text("Down")
-            end
-            
-            if c_teleport.spawn_sequence == map_areas.bottom then
-                c_teleport.set_waypoint_text("Bottom")
+                
+                if c_teleport.spawn_sequence == map_areas.blue_base then
+                    if odd_round == 0 then
+                        c_teleport.set_waypoint_text("Blue Base")
+                    alt
+                        c_teleport.set_waypoint_text("Red Base")
+                    end
+                end
+                
+                if c_teleport.spawn_sequence == map_areas.centre_island then
+                    c_teleport.set_waypoint_text("Island")
+                end
+                
+                if c_teleport.spawn_sequence == map_areas.up then
+                    c_teleport.set_waypoint_text("Up")
+                end
+                
+                if c_teleport.spawn_sequence == map_areas.down then
+                    c_teleport.set_waypoint_text("Down")
+                end
+                
+                if c_teleport.spawn_sequence == map_areas.bottom then
+                    c_teleport.set_waypoint_text("Bottom")
+                end
             end
         end
     end
@@ -298,6 +312,14 @@ for each player do
 
         if current_player.announce_start_timer.is_zero() then
             game.show_message_to(current_player, none, "Version 2.0.%n", VERSION)
+
+            if harlan_version != no_object then
+                if harlan_version.spawn_sequence < 1 then
+                    game.show_message_to(current_player, none, "Harlan Desert Bus")
+                alt
+                    game.show_message_to(current_player, none, "WARNING: Map expects newer version of this gametype")
+                end
+            end
 
             send_incident(ctf_game_start, current_player, no_player)
             current_player.announced_game_start = 1
@@ -998,57 +1020,59 @@ end
 -- QOL FALCON:
 -- notify players when falcons have spawned.
 --------------------------------------------------------------------------------
-for each object with label all_falcons do
-    alias c_falcon = current_object
-    if c_falcon.state == 0 then
-        c_falcon.state = 1
+if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
+    for each object with label all_falcons do
+        alias c_falcon = current_object
+        if c_falcon.state == 0 then
+            c_falcon.state = 1
 
-        if c_falcon.spawn_sequence == map_areas.middle then
-            game.show_message_to(all_players, none, "Falcon spawned in Middle")
-        end
-            
-        if c_falcon.spawn_sequence == map_areas.valley then
-            game.show_message_to(all_players, none, "Falcon spawned in Valley")
-        end 
-
-        if c_falcon.spawn_sequence == map_areas.hangar then
-            game.show_message_to(all_players, none, "Falcon spawned in Hangar")  
-        end
-
-        if c_falcon.spawn_sequence == map_areas.sea_red then
-            if odd_round == 0 then
-                game.show_message_to(all_players, none, "Falcon spawned in Sea Red")   
-            alt
-                game.show_message_to(all_players, none, "Falcon spawned in Sea Blue")   
+            if c_falcon.spawn_sequence == map_areas.middle then
+                game.show_message_to(all_players, none, "Falcon spawned in Middle")
             end
-        end
+                
+            if c_falcon.spawn_sequence == map_areas.valley then
+                game.show_message_to(all_players, none, "Falcon spawned in Valley")
+            end 
 
-        if c_falcon.spawn_sequence == map_areas.sea_blue then
-            if odd_round == 0 then
-                game.show_message_to(all_players, none, "Falcon spawned in Sea Blue")   
-            alt
-                game.show_message_to(all_players, none, "Falcon spawned in Sea Red")   
+            if c_falcon.spawn_sequence == map_areas.hangar then
+                game.show_message_to(all_players, none, "Falcon spawned in Hangar")  
             end
-        end
 
-        if c_falcon.spawn_sequence == map_areas.red_base then
-            if odd_round == 0 then
-                game.show_message_to(all_players, none, "Falcon spawned in Red Base")   
-            alt
-                game.show_message_to(all_players, none, "Falcon spawned in Blue Base")   
+            if c_falcon.spawn_sequence == map_areas.sea_red then
+                if odd_round == 0 then
+                    game.show_message_to(all_players, none, "Falcon spawned in Sea Red")   
+                alt
+                    game.show_message_to(all_players, none, "Falcon spawned in Sea Blue")   
+                end
             end
-        end
 
-        if c_falcon.spawn_sequence == map_areas.blue_base then
-            if odd_round == 0 then
-                game.show_message_to(all_players, none, "Falcon spawned in Blue Base")   
-            alt
-                game.show_message_to(all_players, none, "Falcon spawned in Red Base")   
+            if c_falcon.spawn_sequence == map_areas.sea_blue then
+                if odd_round == 0 then
+                    game.show_message_to(all_players, none, "Falcon spawned in Sea Blue")   
+                alt
+                    game.show_message_to(all_players, none, "Falcon spawned in Sea Red")   
+                end
             end
-        end
 
-        if c_falcon.spawn_sequence == map_areas.centre_island then
-            game.show_message_to(all_players, none, "Falcon spawned in Island")
+            if c_falcon.spawn_sequence == map_areas.red_base then
+                if odd_round == 0 then
+                    game.show_message_to(all_players, none, "Falcon spawned in Red Base")   
+                alt
+                    game.show_message_to(all_players, none, "Falcon spawned in Blue Base")   
+                end
+            end
+
+            if c_falcon.spawn_sequence == map_areas.blue_base then
+                if odd_round == 0 then
+                    game.show_message_to(all_players, none, "Falcon spawned in Blue Base")   
+                alt
+                    game.show_message_to(all_players, none, "Falcon spawned in Red Base")   
+                end
+            end
+
+            if c_falcon.spawn_sequence == map_areas.centre_island then
+                game.show_message_to(all_players, none, "Falcon spawned in Island")
+            end
         end
     end
 end
