@@ -1,5 +1,8 @@
 -- Harlan 2.0 Alpha
 --------------------------------------------------------------------------------
+-- ODD ROUND: determine if round is odd-numbered so team names can be switched.
+-- QOL TELEPORTS: teleporter waypoints with helpful text.
+--------------------------------------------------------------------------------
 -- LOADOUT PALETTES: set and display loadout palettes.
 -- ROUND CARD: display round card based on relevant game settings.
 -- GAME ANNOUNCES: set up UI and announce game start.
@@ -20,13 +23,28 @@
 -- MANAGE ROUND TERMINATION: manage round timer and sudden death.
 --------------------------------------------------------------------------------
 -- CARRIER MELEE HEAL: optional melee health & shields restore for flag carrier kills.
--- QOL TELEPORTS: teleporter waypoints with helpful text.
 -- QOL FALCON: notify players when falcons have spawned.
 -- BETRAYERS: system that penalizes players who have committed more than a certain number of betrayals.
 -- MVP: system that shows in the event-feed who the highest rated player is.
 --------------------------------------------------------------------------------
 
+alias VERSION = 0
 alias FLAG_ZONE_RADIUS = 20
+
+enum map_areas
+    nothing = 0
+    middle = 1
+    valley = 2
+    hangar = 3
+    sea_red = 4
+    sea_blue = 5
+    red_base = 6
+    blue_base = 7
+    centre_island = 8
+    up = 9
+    down = 10
+    bottom = 11
+end
 
 enum sides
    multi
@@ -48,6 +66,7 @@ alias all_falcons = 1
 
 alias carrier_traits  = script_traits[0]
 alias cooldown_traits = script_traits[1]
+alias betrayer_traits = script_traits[2]
 
 alias ui_alert = script_widget[0]
 
@@ -64,9 +83,12 @@ end
 alias sudden_death_enabled        = global.number[0]
 alias announced_sudden_death      = global.number[1]
 alias any_flag_is_being_preserved = global.number[2] -- is set, but nothing ever uses it
+alias odd_round                   = global.number[5]
+alias mvp                         = global.player[2]
 
 alias announced_game_start       = player.number[0]
 alias is_returning_flag          = player.number[1]
+alias betrayals                  = player.number[2]
 alias carrier_cooldown_timer     = player.timer[0]
 alias carry_time_update_interval = player.timer[1]
 alias announce_start_timer       = player.timer[2]
@@ -88,14 +110,17 @@ declare announced_sudden_death with network priority local
 declare any_flag_is_being_preserved with network priority low
 declare global.number[3] with network priority local
 declare global.number[4] with network priority local
+declare odd_round with network priority local
 declare global.object[0] with network priority local
 declare global.object[1] with network priority local
 declare global.player[0] with network priority local
 declare global.player[1] with network priority local
+declare mvp with network priority low
 declare global.team[0] with network priority local
 
 declare player.announced_game_start with network priority low
 declare player.is_returning_flag with network priority low
+declare player.betrayals with network priority low
 declare player.carry_time_update_interval = 1
 declare player.announce_start_timer = 5
 
@@ -120,6 +145,95 @@ on pregame: do
     game.symmetry = 1
     if opt_sides == sides.one then 
         game.symmetry = 0
+    end
+end
+
+on init: do
+    ----------------------------------------------------------------------------
+    -- ODD ROUND:
+    -- determine if round is odd-numbered so team names can be switched.
+    ----------------------------------------------------------------------------
+    odd_round = game.current_round
+    odd_round %= 2 -- Is round odd
+
+    ----------------------------------------------------------------------------
+    -- QOL TELEPORTS:
+    -- teleporter waypoints with helpful text.
+    ----------------------------------------------------------------------------
+    for each object with label "teleporter" do
+        alias c_teleport = current_object
+
+        if  not c_teleport.is_of_type(capture_plate)
+            and not c_teleport.is_of_type(hill_marker)
+        then
+            -- Shape
+            c_teleport.set_shape_visibility(everyone)
+
+            -- Waypoint
+            c_teleport.set_waypoint_visibility(everyone)
+            c_teleport.set_waypoint_priority(low)
+            c_teleport.set_waypoint_range(0, 20)
+
+            if c_teleport.spawn_sequence == map_areas.middle then
+                c_teleport.set_waypoint_text("Middle")
+            end
+
+            if c_teleport.spawn_sequence == map_areas.valley then
+                c_teleport.set_waypoint_text("Valley")
+            end
+
+            if c_teleport.spawn_sequence == map_areas.hangar then
+                c_teleport.set_waypoint_text("Hangar")
+            end
+            
+            if c_teleport.spawn_sequence == map_areas.sea_red then
+                if odd_round == 0 then
+                    c_teleport.set_waypoint_text("Sea Red")
+                alt
+                    c_teleport.set_waypoint_text("Sea Blue")
+                end
+            end
+            
+            if c_teleport.spawn_sequence == map_areas.sea_blue then
+                if odd_round == 0 then
+                    c_teleport.set_waypoint_text("Sea Blue")
+                alt
+                    c_teleport.set_waypoint_text("Sea Red")
+                end
+            end
+            
+            if c_teleport.spawn_sequence == map_areas.red_base then
+                if odd_round == 0 then
+                    c_teleport.set_waypoint_text("Red Base")
+                alt
+                    c_teleport.set_waypoint_text("Blue Base")
+                end
+            end
+            
+            if c_teleport.spawn_sequence == map_areas.blue_base then
+                if odd_round == 0 then
+                    c_teleport.set_waypoint_text("Blue Base")
+                alt
+                    c_teleport.set_waypoint_text("Red Base")
+                end
+            end
+            
+            if c_teleport.spawn_sequence == map_areas.centre_island then
+                c_teleport.set_waypoint_text("Island")
+            end
+            
+            if c_teleport.spawn_sequence == map_areas.up then
+                c_teleport.set_waypoint_text("Up")
+            end
+            
+            if c_teleport.spawn_sequence == map_areas.down then
+                c_teleport.set_waypoint_text("Down")
+            end
+            
+            if c_teleport.spawn_sequence == map_areas.bottom then
+                c_teleport.set_waypoint_text("Bottom")
+            end
+        end
     end
 end
 
@@ -157,22 +271,18 @@ for each player do
     end
 
     if game.score_to_win != 0 and opt_sides == sides.neutral or opt_sides == sides.multi then 
-        if opt_lead_to_win > 0 then -- Lead to win
-            current_player.set_objective_text("Capture the flag.\r\n%n point lead or %n points to win.", opt_lead_to_win, game.score_to_win)
-        end
-        
         if opt_lead_to_win == 0 then
             current_player.set_objective_text("Capture the flag.\r\n%n points to win.", game.score_to_win)
+        alt -- Lead to win
+            current_player.set_objective_text("Capture the flag.\r\n%n point lead or %n points to win.", opt_lead_to_win, game.score_to_win)
         end
     end
 
     if game.score_to_win == 0 and opt_sides == sides.neutral or opt_sides == sides.multi then 
-        if opt_lead_to_win > 0 then -- Lead to win
-            current_player.set_objective_text("Capture the flag.\r\n%n point lead to win.", opt_lead_to_win)
-        end
-
         if opt_lead_to_win == 0 then
             current_player.set_objective_text("Capture the flag.")
+        alt -- Lead to win
+            current_player.set_objective_text("Capture the flag.\r\n%n point lead to win.", opt_lead_to_win)
         end
     end
 end
@@ -187,6 +297,8 @@ for each player do
         ui_alert.set_visibility(current_player, true)
 
         if current_player.announce_start_timer.is_zero() then
+            game.show_message_to(current_player, none, "Version 2.0.%n", VERSION)
+
             send_incident(ctf_game_start, current_player, no_player)
             current_player.announced_game_start = 1
 
@@ -407,21 +519,15 @@ for each team do
 
                 -- Lead to win
                 if opt_lead_to_win > 0 then
-                    alias is_odd = allocate global.number
-                    alias lead_score = allocate global.number
-
-                    is_odd = game.current_round
-                    is_odd %= 2
+                    alias lead_score = global.number[4]
 
                     lead_score = team[0].score
                     lead_score -= team[1].score
 
                     if lead_score > 0 then
-                        if is_odd == 0 then
+                        if odd_round == 0 then
                             game.show_message_to(all_players, none, "Red Team has a %n point lead!", lead_score)
-                        end
-
-                        if is_odd != 0 then
+                        alt
                             game.show_message_to(all_players, none, "Blue Team has a %n point lead!", lead_score)
                         end
 
@@ -434,11 +540,9 @@ for each team do
                     lead_score -= team[0].score
 
                     if lead_score > 0 then
-                        if is_odd == 0 then
+                        if odd_round == 0 then
                             game.show_message_to(all_players, none, "Blue Team has a %n point lead!", lead_score)
-                        end
-
-                        if is_odd != 0 then
+                        alt
                             game.show_message_to(all_players, none, "Red Team has a %n point lead!", lead_score)
                         end
 
@@ -553,9 +657,7 @@ for each team do
 
             if opt_sides == sides.neutral then 
                 send_incident(flag_reset_neutral, current_flag.last_carrier, current_team)
-            end
-
-            if opt_sides != sides.neutral then 
+            alt
                 send_incident(flag_reset, current_team, current_team)
             end
         end
@@ -598,9 +700,7 @@ for each team do
 
             if opt_sides == sides.neutral then 
                 send_incident(flag_dropped_neutral, current_flag.last_carrier, current_team)
-            end
-
-            if opt_sides != sides.neutral then 
+            alt
                 send_incident(flag_dropped, current_flag.last_carrier, current_team)
             end
 
@@ -614,9 +714,7 @@ for each team do
 
             if opt_sides == sides.neutral then 
                 send_incident(flag_grabbed_neutral, current_carrier, current_team)
-            end
-
-            if opt_sides != sides.neutral then 
+            alt
                 send_incident(flag_grabbed, current_carrier, current_team)
             end
 
@@ -886,7 +984,7 @@ if opt_melee_heal == 1 then
                     c_shields = killer.biped.shields
 
                     if c_shields < 100 then
-                        killer.biped.shields = 100 -- TODO what if carrier has overshield?
+                        killer.biped.shields = 100
                     end
                     
                     killer.biped.health = 100
@@ -897,183 +995,60 @@ if opt_melee_heal == 1 then
 end
 
 --------------------------------------------------------------------------------
--- QOL TELEPORTS:
--- teleporter waypoints with helpful text.
---------------------------------------------------------------------------------
-enum map_areas
-    nothing = 0
-    middle = 1
-    valley = 2
-    hangar = 3
-    sea_red = 4
-    sea_blue = 5
-    red_base = 6
-    blue_base = 7
-    centre_island = 8
-    up = 9
-    down = 10
-    bottom = 11
-end
-
-on init: do -- TODO change this if we need init for other things
-    alias c_round = allocate temporary number
-    c_round = game.current_round
-    c_round %= 2 -- Is round odd
-
-    for each object with label "teleporter" do
-        alias c_teleport = current_object
-
-        if  not c_teleport.is_of_type(capture_plate)
-            and not c_teleport.is_of_type(hill_marker)
-        then
-            -- Shape
-            c_teleport.set_shape_visibility(everyone)
-
-            -- Waypoint
-            c_teleport.set_waypoint_visibility(everyone)
-            c_teleport.set_waypoint_priority(low)
-            c_teleport.set_waypoint_range(0, 20)
-
-            if c_teleport.spawn_sequence == map_areas.middle then
-                c_teleport.set_waypoint_text("Middle")
-            end
-
-            if c_teleport.spawn_sequence == map_areas.valley then
-                c_teleport.set_waypoint_text("Valley")
-            end
-
-            if c_teleport.spawn_sequence == map_areas.hangar then
-                c_teleport.set_waypoint_text("Hangar")
-            end
-            
-            if c_teleport.spawn_sequence == map_areas.sea_red then
-                if c_round == 0 then
-                    c_teleport.set_waypoint_text("Sea Red")
-                end
-
-                if c_round != 0 then
-                    c_teleport.set_waypoint_text("Sea Blue")
-                end
-            end
-            
-            if c_teleport.spawn_sequence == map_areas.sea_blue then
-                if c_round == 0 then
-                    c_teleport.set_waypoint_text("Sea Blue")
-                end
-
-                if c_round != 0 then
-                    c_teleport.set_waypoint_text("Sea Red")
-                end
-            end
-            
-            if c_teleport.spawn_sequence == map_areas.red_base then
-                if c_round == 0 then
-                    c_teleport.set_waypoint_text("Red Base")
-                end
-
-                if c_round != 0 then
-                    c_teleport.set_waypoint_text("Blue Base")
-                end
-            end
-            
-            if c_teleport.spawn_sequence == map_areas.blue_base then
-                if c_round == 0 then
-                    c_teleport.set_waypoint_text("Blue Base")
-                end
-
-                if c_round != 0 then
-                    c_teleport.set_waypoint_text("Red Base")
-                end
-            end
-            
-            if c_teleport.spawn_sequence == map_areas.centre_island then
-                c_teleport.set_waypoint_text("Island")
-            end
-            
-            if c_teleport.spawn_sequence == map_areas.up then
-                c_teleport.set_waypoint_text("Up")
-            end
-            
-            if c_teleport.spawn_sequence == map_areas.down then
-                c_teleport.set_waypoint_text("Down")
-            end
-            
-            if c_teleport.spawn_sequence == map_areas.down then
-                c_teleport.set_waypoint_text("Bottom")
-            end
-        end
-    end
-end
-
---------------------------------------------------------------------------------
 -- QOL FALCON:
 -- notify players when falcons have spawned.
 --------------------------------------------------------------------------------
-do
-    alias c_round = allocate temporary number
-    c_round = game.current_round
-    c_round %= 2 -- Is round odd
+for each object with label all_falcons do
+    alias c_falcon = current_object
+    if c_falcon.state == 0 then
+        c_falcon.state = 1
 
-    for each object with label all_falcons do
-        alias c_falcon = current_object
-        if c_falcon.state == 0 then
-            c_falcon.state = 1
+        if c_falcon.spawn_sequence == map_areas.middle then
+            game.show_message_to(all_players, none, "Falcon spawned in Middle")
+        end
+            
+        if c_falcon.spawn_sequence == map_areas.valley then
+            game.show_message_to(all_players, none, "Falcon spawned in Valley")
+        end 
 
-            if c_falcon.spawn_sequence == map_areas.middle then
-                game.show_message_to(all_players, none, "Falcon spawned in Middle")
+        if c_falcon.spawn_sequence == map_areas.hangar then
+            game.show_message_to(all_players, none, "Falcon spawned in Hangar")  
+        end
+
+        if c_falcon.spawn_sequence == map_areas.sea_red then
+            if odd_round == 0 then
+                game.show_message_to(all_players, none, "Falcon spawned in Sea Red")   
+            alt
+                game.show_message_to(all_players, none, "Falcon spawned in Sea Blue")   
             end
-                
-            if c_falcon.spawn_sequence == map_areas.valley then
-                game.show_message_to(all_players, none, "Falcon spawned in Valley")
-            end 
+        end
 
-            if c_falcon.spawn_sequence == map_areas.hangar then
-                game.show_message_to(all_players, none, "Falcon spawned in Hangar")  
+        if c_falcon.spawn_sequence == map_areas.sea_blue then
+            if odd_round == 0 then
+                game.show_message_to(all_players, none, "Falcon spawned in Sea Blue")   
+            alt
+                game.show_message_to(all_players, none, "Falcon spawned in Sea Red")   
             end
+        end
 
-            if c_falcon.spawn_sequence == map_areas.sea_red then
-                if c_round == 0 then
-                    game.show_message_to(all_players, none, "Falcon spawned in Sea Red")   
-                end
-
-                if c_round != 0 then
-                    game.show_message_to(all_players, none, "Falcon spawned in Sea Blue")   
-                end
+        if c_falcon.spawn_sequence == map_areas.red_base then
+            if odd_round == 0 then
+                game.show_message_to(all_players, none, "Falcon spawned in Red Base")   
+            alt
+                game.show_message_to(all_players, none, "Falcon spawned in Blue Base")   
             end
+        end
 
-            if c_falcon.spawn_sequence == map_areas.sea_blue then
-                if c_round == 0 then
-                    game.show_message_to(all_players, none, "Falcon spawned in Sea Blue")   
-                end
-
-                if c_round != 0 then
-                    game.show_message_to(all_players, none, "Falcon spawned in Sea Red")   
-                end
+        if c_falcon.spawn_sequence == map_areas.blue_base then
+            if odd_round == 0 then
+                game.show_message_to(all_players, none, "Falcon spawned in Blue Base")   
+            alt
+                game.show_message_to(all_players, none, "Falcon spawned in Red Base")   
             end
+        end
 
-            if c_falcon.spawn_sequence == map_areas.red_base then
-                if c_round == 0 then
-                    game.show_message_to(all_players, none, "Falcon spawned in Red Base")   
-                end
-
-                if c_round != 0 then
-                    game.show_message_to(all_players, none, "Falcon spawned in Blue Base")   
-                end
-            end
-
-            if c_falcon.spawn_sequence == map_areas.blue_base then
-                if c_round == 0 then
-                    game.show_message_to(all_players, none, "Falcon spawned in Blue Base")   
-                end
-
-                if c_round != 0 then
-                    game.show_message_to(all_players, none, "Falcon spawned in Red Base")   
-                end
-            end
-
-            if c_falcon.spawn_sequence == map_areas.centre_island then
-                game.show_message_to(all_players, none, "Falcon spawned in Island")
-            end
+        if c_falcon.spawn_sequence == map_areas.centre_island then
+            game.show_message_to(all_players, none, "Falcon spawned in Island")
         end
     end
 end
@@ -1082,9 +1057,6 @@ end
 -- BETRAYERS:
 -- system that penalizes players who have committed more than a certain number of betrayals.
 --------------------------------------------------------------------------------
-alias trait_betrayers = script_traits[2]
-alias betrayals = player.number[2]
-
 for each player do
     alias c_player = current_player
 
@@ -1116,7 +1088,7 @@ for each player do
 
     inline: if c_player.betrayals == 4 then 
         -- Apply the punishment
-        c_player.apply_traits(trait_betrayers)
+        c_player.apply_traits(betrayer_traits)
 
         c_player.biped.remove_weapon(primary, true)
         c_player.biped.remove_weapon(secondary, true)
@@ -1130,9 +1102,6 @@ end
 -- MVP:
 -- system that shows in the event-feed who the highest rated player is.
 --------------------------------------------------------------------------------
-declare global.player[2] with network priority low
-alias mvp = global.player[2]
-
 for each player do
     alias c_player = current_player
 
