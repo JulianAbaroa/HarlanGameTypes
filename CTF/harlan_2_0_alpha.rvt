@@ -27,6 +27,9 @@
 -- QOL FALCON: notify players when falcons have spawned.
 -- BETRAYERS: system that penalizes players who have committed more than a certain number of betrayals.
 -- MVP: system that shows in the event-feed who the highest rated player is.
+-- CUSTOM TELEPORTS: Converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
+-- BLINKSHOT: Players who destroy monitors labeled as "blinkshot" are teleported to their position.
+-- SCALE SYSTEM: Allows objects to be scaled in-game.
 --------------------------------------------------------------------------------
 
 alias VERSION = 1
@@ -45,6 +48,13 @@ enum map_areas
     up = 9
     down = 10
     bottom = 11
+end
+
+enum scale_mode
+    nothing = 0
+    lineal = 1
+    x10 = 2
+    high_precision = 3
 end
 
 enum sides
@@ -85,20 +95,32 @@ alias sudden_death_enabled        = global.number[0]
 alias announced_sudden_death      = global.number[1]
 alias any_flag_is_being_preserved = global.number[2] -- is set, but nothing ever uses it
 alias odd_round                   = global.number[5]
+alias current_calculated_scale    = global.number[6]
+alias recursion_counter           = global.number[7]
+alias global_math_buffer          = global.number[8]
 alias harlan_version              = global.object[2]
+alias sys_config                  = global.object[3]
 alias mvp                         = global.player[2]
 
 alias announced_game_start       = player.number[0]
 alias is_returning_flag          = player.number[1]
 alias betrayals                  = player.number[2]
+alias blinkshot                  = player.object[0]
 alias carrier_cooldown_timer     = player.timer[0]
 alias carry_time_update_interval = player.timer[1]
 alias announce_start_timer       = player.timer[2]
 
 alias state                 = object.number[0] -- flag state; see (flag_state) enum
+alias delay                 = object.number[0]
+alias scale_result          = object.number[0]
+alias scale_system          = object.number[0]
+alias math_remainder        = object.number[1]
 alias announced_flag_take   = object.number[2]
 alias announced_flag_drop   = object.number[3]
 alias zone                  = object.object[0] -- flag zone; boundary centered on flag
+alias linked_teleport       = object.object[0]
+alias saved_teleport        = object.object[0]
+alias blinkshot             = object.object[0]
 alias last_carrier          = object.player[0]
 alias reset_timer           = object.timer[0]
 alias return_timer          = object.timer[1]
@@ -107,14 +129,19 @@ alias notification_throttle = object.timer[2]
 alias flag_point = team.object[0] -- spawn and drop point
 alias flag       = team.object[1]
 
+
 declare sudden_death_enabled   with network priority local
 declare announced_sudden_death with network priority local
 declare any_flag_is_being_preserved with network priority low
 declare global.number[3] with network priority local
 declare global.number[4] with network priority local
+declare current_calculated_scale with network priority low
+declare recursion_counter with network priority low
+declare global_math_buffer with network priority low
 declare odd_round with network priority local
 declare global.object[0] with network priority local
 declare global.object[1] with network priority local
+declare sys_config with network priority low
 declare harlan_version with network priority local
 declare global.player[0] with network priority local
 declare global.player[1] with network priority local
@@ -139,6 +166,48 @@ declare object.notification_throttle = 3
 
 declare team.flag_point with network priority low
 declare team.flag       with network priority low
+
+--------------------------------------------------------------------------------
+-- SCALE SYSTEM:
+-- Allows objects to be scaled in-game.
+--------------------------------------------------------------------------------
+function math_precision_calculator()
+    alias subject = current_object
+
+    -- We increment the recursion counter to avoid infinite loops.
+    recursion_counter += 1
+
+    -- Start of the mathematical smoothing algorithm:
+    -- It takes the current size and saves it in the waste buffer.
+    subject.math_remainder = subject.scale_result
+
+    -- Divide the remainder by 33 (simulate 3%).
+    subject.math_remainder /= 33
+
+    -- It takes the current size, passes it to the global buffer and divides it by 228 (simulating 0.4%).
+    global_math_buffer = subject.scale_result
+    global_math_buffer /= 228
+
+    -- Add both fractional results to the total size.
+    -- This creates compound growth with each iteration.
+    subject.scale_result += subject.math_remainder
+    subject.scale_result += global_math_buffer
+
+    -- If the recursion counter has not yet reached the limit defined in current_calculated_scale...
+    if recursion_counter < current_calculated_scale then
+        -- ...it calls itself to continue calculating.
+        math_precision_calculator()
+    end
+end
+
+function limit_checker()
+    alias subject = current_object
+
+    -- If the spawn_sequence is exactly -10, force minimum scale.
+    if subject.spawn_sequence == -10 then
+        current_calculated_scale = 1
+    end
+end
 
 do
     sudden_death_enabled = 0
@@ -247,6 +316,212 @@ on init: do
                     c_teleport.set_waypoint_text("Bottom")
                 end
             end
+        end
+    end
+
+    ----------------------------------------------------------------------------
+    -- CUSTOM TELEPORTS:
+    -- Converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
+    ----------------------------------------------------------------------------
+    if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
+        -- This code below initializes the custom teleports.
+        for each object with label "teleporter" do
+            alias c_teleport = current_object
+
+            -- If this object meets the requirements to be a custom teleport.
+            if  c_teleport.spawn_sequence > 0 and
+                c_teleport.is_of_type(hill_marker) or
+                c_teleport.is_of_type(capture_plate)
+            then
+                alias c_teleport = current_object
+    
+                c_teleport.set_waypoint_range(0, 10)
+                c_teleport.set_waypoint_visibility(everyone)
+                c_teleport.set_waypoint_priority(low)   
+    
+                if c_teleport.is_of_type(hill_marker) then
+                    c_teleport.set_waypoint_text("Sender")
+                    c_teleport.set_shape_visibility(everyone)  
+                                    
+                altif c_teleport.is_of_type(capture_plate) then
+                    c_teleport.set_waypoint_text("Reciever")
+                    c_teleport.set_shape_visibility(no_one)
+                end
+            end
+        end
+
+        -- This code below links custom teleports that have the same spawn_sequence.
+        for each object with label "teleporter" do
+            alias c_teleport = allocate global.object
+            c_teleport = current_object
+
+            if  c_teleport.spawn_sequence > 0 and 
+                c_teleport.is_of_type(hill_marker) or
+                c_teleport.is_of_type(capture_plate) 
+            then
+                for each object with label "teleporter" do
+                    alias temp_teleport = current_object
+            
+                    if  temp_teleport.spawn_sequence > 0 and 
+                        temp_teleport.is_of_type(hill_marker) or
+                        temp_teleport.is_of_type(capture_plate) 
+                    then
+                        -- If these teleports are not the same one.
+                        if c_teleport != temp_teleport then
+                            -- If these teleports have to link together.
+                            if temp_teleport.spawn_sequence == c_teleport.spawn_sequence then
+                                c_teleport.linked_teleport = temp_teleport
+                                temp_teleport.linked_teleport = c_teleport
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    ----------------------------------------------------------------------------
+    -- SCALE SYSTEM:
+    -- Allows objects to be scaled in-game.
+    ----------------------------------------------------------------------------
+    if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
+        if sys_config == no_object then
+            -- Initialize sys_config.
+            for each object with label "sys_config" do
+                if sys_config == no_object then
+                    sys_config = current_object
+                end
+            end
+
+            alias scale_mode_option = script_option[7]
+            if scale_mode_option == scale_mode.nothing then
+                sys_config.scale_system = scale_mode.nothing
+            
+            altif scale_mode_option == scale_mode.lineal then
+                sys_config.scale_system = scale_mode.lineal
+
+            altif scale_mode_option == scale_mode.x10 then
+                sys_config.scale_system = scale_mode.x10
+
+            altif scale_mode_option == scale_mode.high_precision then
+                sys_config.scale_system = scale_mode.high_precision
+            end
+        end
+
+        for each object with label "scale" do
+            alias subject = current_object
+
+            -- We initialize the current scale with the value of the Spawn Sequence.
+            current_calculated_scale = subject.spawn_sequence
+
+            -- Mode 0: Lineal
+            if sys_config.scale_system == scale_mode.lineal then
+                -- If the spawn sequence is negative (e.g., -15), apply the expansion formula.
+                if subject.spawn_sequence < -10 then
+                    -- Formula: (x + 101) * 2
+                    current_calculated_scale += 101
+                    current_calculated_scale *= 2
+
+                    -- Fine adjustments according to specific negative ranges:
+                    if subject.spawn_sequence > -71 then
+                        current_calculated_scale *= 2
+                    end
+
+                    if subject.spawn_sequence > -41 then
+                        -- Equivalent to multiplying by 1.5
+                        current_calculated_scale *= 3
+                        current_calculated_scale /= 2 
+                    end
+                end
+
+                -- Final conversion to base percentage: (x * 10) + 100
+                current_calculated_scale *= 10
+                current_calculated_scale += 100
+
+                -- Offset settings for large negative values
+                if subject.spawn_sequence < -10 then
+                    current_calculated_scale += 1000
+
+                    if subject.spawn_sequence > -71 then
+                        current_calculated_scale += -600
+                    end
+
+                    if subject.spawn_sequence > -41 then
+                        current_calculated_scale += -1200
+                    end
+                end
+
+                -- Check if we fell into the forbidden value (-10)
+                limit_checker()
+            end
+
+            -- Mode 1: x10 Multiplier
+            if sys_config.scale_system == scale_mode.x10 then
+                current_calculated_scale *= 10
+
+                if subject.spawn_sequence < -10 then
+                    current_calculated_scale *= 2
+
+                    if subject.spawn_sequence > -81 then
+                        current_calculated_scale += 800
+                    end
+                end
+
+                if subject.spawn_sequence < -80 then
+                    current_calculated_scale *= 2
+                    current_calculated_scale += -800
+                end
+
+                current_calculated_scale += 100
+                limit_checker()
+            end
+
+            -- Mode 3: High Precision
+            if sys_config.scale_system == scale_mode.high_precision then
+                -- Initial base of 100%
+                subject.scale_result = 100
+                current_calculated_scale = subject.spawn_sequence
+
+                -- If it is negative, we apply a multiplier of x5
+                if subject.spawn_sequence < 0 then
+                    current_calculated_scale *= 5
+                    subject.scale_result += current_calculated_scale
+
+                    -- Special case: Spawn Sequence -20 strength scales to 1%
+                    if subject.spawn_sequence == -20 then
+                        subject.scale_result = 1
+                    end
+
+                    -- Special calculation for values ​​less than -20
+                    if subject.spawn_sequence < -20 then
+                        current_calculated_scale = 100
+                        current_calculated_scale += subject.spawn_sequence
+                        current_calculated_scale += 101
+                    end
+                end
+
+                -- If it is outside the safe range (-20 to 0), we activate recursion.
+                if subject.spawn_sequence < -20 or subject.spawn_sequence > 0 then
+                    subject.scale_result = 100
+                        
+                    -- Reset global counter
+                    recursion_counter = 0
+
+                    math_precision_calculator()
+                end
+
+                -- We assign the final calculated result to the current value
+                current_calculated_scale = subject.scale_result
+            end
+
+            -- We save the final calculation in the object's memory for future reference.
+            subject.scale_result = current_calculated_scale
+
+            -- We performed the actual resizing in the game engine.
+            subject.set_scale(current_calculated_scale)
+
+            -- We copy rotation on itself to force the physics update.
+            subject.copy_rotation_from(subject, false)
         end
     end
 end
@@ -1085,22 +1360,22 @@ for each player do
     alias c_player = current_player
 
     -- If the current player was killed by a teammate
-    inline: if c_player.killer_type_is(betrayal) then 
+    if c_player.killer_type_is(betrayal) then 
         alias c_betrayer = allocate temporary player
 
         -- Save the betrayer on a global player
         c_betrayer = c_player.try_get_killer()
 
-        inline: if c_player.betrayals < 3 then 
+        if c_player.betrayals < 3 then 
             -- Increase the betrayals of the betrayer
             c_betrayer.betrayals += 1
 
             -- If the betrayer betrayals is less than 4
-            inline: if c_betrayer.betrayals < 4 then 
+            if c_betrayer.betrayals < 4 then 
                 game.show_message_to(all_players, none, "Teamkilling is not allowed, %n!", c_betrayer)
             end
 
-            inline: if c_betrayer.betrayals >= 4 then 
+            if c_betrayer.betrayals >= 4 then 
                 c_betrayer.biped.set_waypoint_text("Betrayer")
                 c_betrayer.biped.set_waypoint_visibility(everyone)
 
@@ -1110,7 +1385,7 @@ for each player do
         end
     end
 
-    inline: if c_player.betrayals == 4 then 
+    if c_player.betrayals == 4 then 
         -- Apply the punishment
         c_player.apply_traits(betrayer_traits)
 
@@ -1136,5 +1411,125 @@ for each player do
     if c_player.rating > mvp.rating and c_player != mvp then
         game.show_message_to(all_players, none, "%n is the current MVP!", c_player)
         mvp = c_player
+    end
+end
+
+--------------------------------------------------------------------------------
+-- CUSTOM TELEPORTS:
+-- Converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
+--------------------------------------------------------------------------------
+for each object with label "teleporter" do
+    alias c_teleport = current_object
+
+    -- If this teleport has a linked teleport.
+    if c_teleport.linked_teleport != no_object then
+        -- Main logic
+        if c_teleport.is_of_type(hill_marker) then
+            for each player do
+                alias c_player = current_player
+                alias c_biped = allocate global.object
+                c_biped = c_player.biped
+
+                -- If a player has entered this custom teleport.
+                if c_teleport.shape_contains(c_biped) and c_biped.saved_teleport == no_object then
+                    alias c_weapon = allocate global.object
+                    c_weapon = c_player.get_weapon(primary)
+
+                    -- If this player has a flag.
+                    if c_weapon.is_of_type(flag) then
+                        -- If the custom teleport and the flag are from the same team.
+                        if c_teleport.team == c_weapon.team or c_teleport.team == neutral_team then
+                            c_biped.attach_to(c_teleport.linked_teleport, 0, 0, 0, relative)
+                            c_biped.saved_teleport = c_teleport.linked_teleport
+                        end
+
+                    -- If this player doesn't have a flag.
+                    altif not c_weapon.is_of_type(flag) then
+                        c_biped.attach_to(c_teleport.linked_teleport, 0, 0, 0, relative)
+                        c_biped.saved_teleport = c_teleport.linked_teleport
+                    end
+                end 
+
+                --If this player has a saved teleport
+                if c_biped.saved_teleport != no_object then
+                    -- If this player is not inside the saved teleport's shape.
+                    if not c_biped.saved_teleport.shape_contains(c_biped) then
+                        c_biped.saved_teleport = no_object
+                        c_biped.delay = 0
+                    end
+
+                    c_biped.delay += 1
+
+                    if c_biped.delay == 50 then
+                        c_biped.detach()
+                        c_biped.delay = 0
+                    end
+                end
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- BLINKSHOT:
+-- Players who destroy monitors labeled as "blinkshot" are teleported to their position.
+--------------------------------------------------------------------------------
+for each object with label "blink_spawn" do
+    alias blink_spawn = current_object
+
+    if blink_spawn.blinkshot == no_object then
+        blink_spawn.blinkshot = blink_spawn.place_at_me(monitor, "blinkshot", none, 0, 0, 0, none)
+        blink_spawn.blinkshot.set_scale(150)
+        blink_spawn.blinkshot.set_waypoint_priority(low)
+        blink_spawn.blinkshot.set_waypoint_visibility(everyone)
+        blink_spawn.blinkshot.set_waypoint_range(0, 100)
+    end
+end
+
+for each object with label "blinkshot" do
+    alias blinkshot = current_object
+    blinkshot.shields = 0
+    blinkshot.health = 1
+end
+
+for each player do
+    alias c_player = current_player
+    alias killed_blink = allocate global.object
+    killed_blink = c_player.blinkshot
+
+    if killed_blink != no_object and killed_blink.has_forge_label("blinkshot") then
+        alias c_weapon = allocate global.object
+        c_weapon = c_player.get_weapon(primary)
+
+        if c_weapon.is_of_type(flag) then
+            killed_blink.delete()
+        end
+
+        c_player.biped.attach_to(killed_blink, 0, 0, 0, relative)
+        c_player.biped.shields = 0
+
+        killed_blink.delay += 1
+        if killed_blink.delay >= 40 then
+            c_player.biped.detach()
+            killed_blink.delete()
+        end
+    end
+end
+
+on object death: do
+    if killer_player != no_player then
+        alias c_vehicle = allocate global.object
+        c_vehicle = killer_player.get_vehicle()
+
+        -- If the player didn't had a vehicle and the killed_object was a blinkshot.
+        if  c_vehicle == no_object then
+            --------------------------------------------------------------------------------
+            -- BLINKSHOT:
+            -- Players who destroy monitors labeled as "blinkshot" are teleported to their position.
+            --------------------------------------------------------------------------------
+            if killed_object.has_forge_label("blinkshot") then
+                killer_player.blinkshot = killed_object.place_at_me(hill_marker, "blinkshot", none, 0, 0, 0, none)
+            end
+        end
     end
 end
