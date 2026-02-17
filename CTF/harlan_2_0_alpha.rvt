@@ -34,7 +34,7 @@
 -- SPECIAL WEAPON TRAITS: apply limited traits to players holding certain weapons.
 --------------------------------------------------------------------------------
 
-alias VERSION = 3
+alias VERSION = 4
 alias FLAG_ZONE_RADIUS = 20
 
 enum map_areas
@@ -193,55 +193,59 @@ on init: do
     -- INIT CUSTOM TELEPORTS:
     -- Converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
     ----------------------------------------------------------------------------
-    if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
-        -- This code below initializes the custom teleports.
-        for each object with label "teleporter" do
+    -- This code below initializes the custom teleports.
+    for each object with label "teleporter" do
+        alias c_teleport = current_object
+
+        -- If this object meets the requirements to be a custom teleport.
+        if  c_teleport.spawn_sequence > 0 and
+            c_teleport.is_of_type(hill_marker) or
+            c_teleport.is_of_type(capture_plate)
+        then
             alias c_teleport = current_object
 
-            -- If this object meets the requirements to be a custom teleport.
-            if  c_teleport.spawn_sequence > 0 and
-                c_teleport.is_of_type(hill_marker) or
-                c_teleport.is_of_type(capture_plate)
-            then
-                alias c_teleport = current_object
-    
-                c_teleport.set_waypoint_range(0, 10)
-                c_teleport.set_waypoint_visibility(everyone)
-                c_teleport.set_waypoint_priority(low)   
-    
-                if c_teleport.is_of_type(hill_marker) then
-                    c_teleport.set_waypoint_text("Sender")
-                    c_teleport.set_shape_visibility(everyone)  
-                                    
-                altif c_teleport.is_of_type(capture_plate) then
-                    c_teleport.set_waypoint_text("Reciever")
-                    c_teleport.set_shape_visibility(no_one)
-                end
+            c_teleport.set_waypoint_range(0, 10)
+            c_teleport.set_waypoint_visibility(everyone)
+            c_teleport.set_waypoint_priority(low)   
+
+            if c_teleport.is_of_type(hill_marker) then
+                c_teleport.set_waypoint_text("Sender")
+                c_teleport.set_shape_visibility(everyone)  
+                                
+            altif c_teleport.is_of_type(capture_plate) then
+                c_teleport.set_waypoint_text("Reciever")
+                c_teleport.set_shape_visibility(no_one)
             end
         end
+    end
 
-        -- This code below links custom teleports that have the same spawn_sequence.
-        for each object with label "teleporter" do
-            alias c_teleport = allocate global.object
-            c_teleport = current_object
+    -- This code below links custom teleports that have the same spawn_sequence.
+    for each object with label "teleporter" do
+        alias c_teleport = allocate global.object
+        c_teleport = current_object
 
-            if  c_teleport.spawn_sequence > 0 and 
-                c_teleport.is_of_type(hill_marker) or
-                c_teleport.is_of_type(capture_plate) 
-            then
-                for each object with label "teleporter" do
-                    alias temp_teleport = current_object
-            
-                    if  temp_teleport.spawn_sequence > 0 and 
-                        temp_teleport.is_of_type(hill_marker) or
-                        temp_teleport.is_of_type(capture_plate) 
-                    then
-                        -- If these teleports are not the same one.
-                        if c_teleport != temp_teleport then
-                            -- If these teleports have to link together.
-                            if  temp_teleport.spawn_sequence == c_teleport.spawn_sequence 
-                                and temp_teleport.team == c_teleport.team 
-                            then
+        if  c_teleport.spawn_sequence > 0 and 
+            c_teleport.is_of_type(hill_marker) or
+            c_teleport.is_of_type(capture_plate) 
+        then
+            for each object with label "teleporter" do
+                alias temp_teleport = current_object
+        
+                if  temp_teleport.spawn_sequence > 0 and 
+                    temp_teleport.is_of_type(hill_marker) or
+                    temp_teleport.is_of_type(capture_plate) 
+                then
+                    -- If these teleports are not the same one.
+                    if c_teleport != temp_teleport then
+                        if temp_teleport.spawn_sequence == c_teleport.spawn_sequence then
+                            -- Team-based linking only for new maps with harlan_version
+                            if harlan_version != no_object then
+                                if temp_teleport.team == c_teleport.team then
+                                    c_teleport.linked_teleport = temp_teleport
+                                    temp_teleport.linked_teleport = c_teleport
+                                end
+                            alt
+                                -- Legacy mode: link by spawn_sequence only
                                 c_teleport.linked_teleport = temp_teleport
                                 temp_teleport.linked_teleport = c_teleport
                             end
@@ -466,7 +470,7 @@ for each player do
     end
 
     if game.score_to_win != 0 and opt_sides == sides.neutral or opt_sides == sides.multi then
-        if opt_lead_to_win <= game.score_to_win then
+        if opt_lead_to_win >= game.score_to_win then
             current_player.set_objective_text("Capture the flag.\r\n%n points to win.", game.score_to_win)
         alt -- Lead to win
             current_player.set_objective_text("Capture the flag.\r\n%n point lead or %n points to win.", opt_lead_to_win, game.score_to_win)
