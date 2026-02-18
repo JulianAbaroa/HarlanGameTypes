@@ -4,6 +4,7 @@
 -- ODD ROUND: determine if round is odd-numbered so team names can be switched.
 -- INIT CUSTOM TELEPORTS: Converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
 -- QOL TELEPORTS: teleporter waypoints with helpful text.
+-- INIT FALCON DETECTION: Allows players to know if there's falcons on teleports before using them.
 -- SCALE SYSTEM: Allows objects to be scaled in-game.
 --------------------------------------------------------------------------------
 -- LOADOUT PALETTES: set and display loadout palettes.
@@ -32,9 +33,10 @@
 -- CUSTOM TELEPORTS: Converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
 -- BLINKSHOT: Players who destroy monitors labeled as "blinkshot" are teleported to their position.
 -- SPECIAL WEAPON TRAITS: apply limited traits to players holding certain weapons.
+-- FALCON DETECTION: Allows players to know if there's falcons on teleports before using them.
 --------------------------------------------------------------------------------
 
-alias VERSION = 4
+alias VERSION = 5
 alias FLAG_ZONE_RADIUS = 20
 
 enum map_areas
@@ -50,6 +52,7 @@ enum map_areas
     up = 9
     down = 10
     bottom = 11
+    mid_road = 12
 end
 
 enum sides
@@ -116,6 +119,7 @@ alias zone                  = object.object[0] -- flag zone; boundary centered o
 alias linked_teleport       = object.object[0]
 alias saved_teleport        = object.object[0]
 alias blinkshot             = object.object[0]
+alias linked_detector       = object.object[0]
 alias last_carrier          = object.player[0]
 alias reset_timer           = object.timer[0]
 alias return_timer          = object.timer[1]
@@ -276,15 +280,15 @@ on init: do
 
             -- Shape
             c_teleport.set_shape_visibility(everyone)
-
+    
             -- Waypoint
             c_teleport.set_waypoint_visibility(everyone)
             c_teleport.set_waypoint_priority(low)
             c_teleport.set_waypoint_range(0, 20)
             
             if  harlan_version != no_object
-                and harlan_version.spawn_sequence < 1
-                and show_text == 1
+            and harlan_version.spawn_sequence < 1
+            and show_text == 1
             then
                 if c_teleport.spawn_sequence == map_areas.middle then
                     c_teleport.set_waypoint_text("Middle")
@@ -344,6 +348,50 @@ on init: do
                 
                 if c_teleport.spawn_sequence == map_areas.bottom then
                     c_teleport.set_waypoint_text("Bottom")
+                end
+
+                if c_teleport.spawn_sequence == map_areas.mid_road then
+                    c_teleport.set_waypoint_text("Mid-Road")
+                end
+            end
+        end
+    end
+
+    ----------------------------------------------------------------------------
+    -- INIT FALCON DETECTION:
+    -- Allows players to know if there's falcons on teleports before using them.
+    ----------------------------------------------------------------------------
+    -- Initialize object detectors.
+    for each object with label "obj_detector" do
+        alias detector = current_object
+
+        -- Players inside this shape gets the objects detected.
+        if detector.team == team[0] then
+            detector.set_shape(cylinder, 20, 10, 10)
+            detector.set_shape_visibility(everyone)
+            
+        -- Shape used to detect the specified object
+        altif detector.team == team[1] then
+            detector.set_shape(cylinder, 40, 20, 10)
+            detector.set_shape_visibility(everyone)
+        end
+    end
+
+    -- Link object detectors.
+    for each object with label "obj_detector" do
+        alias detector = allocate temporary object
+        detector = current_object
+
+        if detector.team == team[0] then
+            for each object with label "obj_detector" do
+                alias temp_detector = current_object
+    
+                if  temp_detector.team == team[1] and 
+                    detector.spawn_sequence == temp_detector.spawn_sequence and
+                    detector.linked_detector == no_object
+                then
+                    -- Save the object detector inside the player detector.
+                    detector.linked_detector = temp_detector
                 end
             end
         end
@@ -1461,6 +1509,56 @@ if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
                 or c_weapon.is_of_type(focus_rifle)
             then
                 current_player.apply_traits(special_traits)
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- FALCON DETECTION:
+-- Allows players to know if there's falcons on teleports before using them.
+--------------------------------------------------------------------------------
+for each object with label "obj_detector" do
+    alias detector = allocate temporary object
+    detector = current_object
+
+    if  detector.team == team[0] and
+        detector.linked_detector != no_object
+    then
+        for each player do
+            alias c_player = current_player
+            alias available = allocate global.number
+            available = 0
+
+            if  detector.shape_contains(c_player.biped) and
+                detector.linked_detector != no_object
+            then
+                for each object with label 1 do
+                    alias c_falcon = allocate temporary object
+                    c_falcon = current_object
+
+                    alias c_health = allocate temporary number
+                    c_health = c_falcon.health
+
+                    alias c_speed = allocate temporary number
+                    c_speed = c_falcon.get_speed()
+
+                    if  detector.linked_detector.shape_contains(c_falcon) and
+                        c_health > 0 and c_speed == 0
+                    then
+                        available += 1
+                    end
+                end
+
+                if available >= 0 then
+                    script_widget[0].set_text("Available falcons: %n", available)
+                    script_widget[0].set_visibility(c_player, true)
+                end
+            end
+
+            if not detector.shape_contains(c_player.biped) then
+                script_widget[0].set_text("")
+                script_widget[0].set_visibility(c_player, false)
             end
         end
     end
