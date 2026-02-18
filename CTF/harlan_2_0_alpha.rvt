@@ -36,7 +36,7 @@
 -- FALCON DETECTION: Allows players to know if there's falcons on teleports before using them.
 --------------------------------------------------------------------------------
 
-alias VERSION = 5
+alias VERSION = 6
 alias FLAG_ZONE_RADIUS = 20
 
 enum map_areas
@@ -119,7 +119,6 @@ alias zone                  = object.object[0] -- flag zone; boundary centered o
 alias linked_teleport       = object.object[0]
 alias saved_teleport        = object.object[0]
 alias blinkshot             = object.object[0]
-alias linked_detector       = object.object[0]
 alias last_carrier          = object.player[0]
 alias reset_timer           = object.timer[0]
 alias return_timer          = object.timer[1]
@@ -361,37 +360,36 @@ on init: do
     -- INIT FALCON DETECTION:
     -- Allows players to know if there's falcons on teleports before using them.
     ----------------------------------------------------------------------------
-    -- Initialize object detectors.
+    -- First, spawn child detection zones for all obj_detectors (falcon detection)
     for each object with label "obj_detector" do
-        alias detector = current_object
-
-        -- Players inside this shape gets the objects detected.
-        if detector.team == team[0] then
-            detector.set_shape(cylinder, 20, 10, 10)
-            detector.set_shape_visibility(everyone)
-            
-        -- Shape used to detect the specified object
-        altif detector.team == team[1] then
-            detector.set_shape(cylinder, 40, 20, 10)
-            detector.set_shape_visibility(everyone)
+        alias c_detector = current_object
+        
+        if c_detector.zone == no_object then
+            c_detector.zone = c_detector.place_at_me(hill_marker, none, never_garbage_collect | suppress_effect, 0, 0, 0, none)
+            c_detector.zone.set_shape(cylinder, 100, 20, 10)
+            c_detector.zone.set_shape_visibility(everyone)
         end
     end
 
-    -- Link object detectors.
-    for each object with label "obj_detector" do
-        alias detector = allocate temporary object
-        detector = current_object
-
-        if detector.team == team[0] then
+    -- Then, only spawn sender zones if there's a matching obj_detector
+    for each object with label "teleporter" do
+        alias c_sender = allocate temporary object
+        c_sender = current_object
+        
+        if not c_sender.is_of_type(hill_marker) -- not a custom teleport
+            and c_sender.zone == no_object 
+        then
+            -- Check if there's a matching obj_detector
             for each object with label "obj_detector" do
-                alias temp_detector = current_object
-    
-                if  temp_detector.team == team[1] and 
-                    detector.spawn_sequence == temp_detector.spawn_sequence and
-                    detector.linked_detector == no_object
+                alias c_detector = allocate temporary object
+                c_detector = current_object
+                if c_sender.spawn_sequence == c_detector.spawn_sequence 
+                    and c_sender.team == c_detector.team
                 then
-                    -- Save the object detector inside the player detector.
-                    detector.linked_detector = temp_detector
+                    -- Found a match, spawn sender's detection zone
+                    c_sender.zone = c_sender.place_at_me(hill_marker, none, never_garbage_collect | suppress_effect, 0, 0, 0, none)
+                    c_sender.zone.set_shape(cylinder, 16, 12, 4)
+                    c_sender.zone.set_shape_visibility(everyone)
                 end
             end
         end
@@ -1382,7 +1380,9 @@ for each object with label "teleporter" do
     alias c_teleport = current_object
 
     -- If this teleport has a linked teleport.
-    if c_teleport.linked_teleport != no_object then
+    if  c_teleport.linked_teleport != no_object 
+        and c_teleport.linked_teleport.has_forge_label("teleporter") 
+    then
         -- Main logic
         if c_teleport.is_of_type(hill_marker) then
             for each player do
@@ -1518,47 +1518,64 @@ end
 -- FALCON DETECTION:
 -- Allows players to know if there's falcons on teleports before using them.
 --------------------------------------------------------------------------------
+-- Count falcons at each obj_detector and store count
 for each object with label "obj_detector" do
     alias detector = allocate temporary object
     detector = current_object
+    
+    if detector.zone != no_object then
+        -- Count available falcons in this detector's zone
+        alias available = allocate temporary number
+        available = 0
+        
+        for each object with label all_falcons do
+            alias c_falcon = allocate temporary object
+            c_falcon = current_object
 
-    if  detector.team == team[0] and
-        detector.linked_detector != no_object
-    then
-        for each player do
-            alias c_player = current_player
-            alias available = allocate global.number
-            available = 0
+            alias c_health = allocate temporary number
+            c_health = c_falcon.health
 
-            if  detector.shape_contains(c_player.biped) and
-                detector.linked_detector != no_object
+            alias c_speed = allocate temporary number
+            c_speed = c_falcon.get_speed()
+            
+            if detector.zone.shape_contains(c_falcon) 
+                and c_health > 0 
+                and c_speed == 0
             then
-                for each object with label 1 do
-                    alias c_falcon = allocate temporary object
-                    c_falcon = current_object
+                available += 1
+            end
+        end
+        
+        -- Store count in detector (reuse state slot)
+        detector.state = available
+    end
+end
 
-                    alias c_health = allocate temporary number
-                    c_health = c_falcon.health
-
-                    alias c_speed = allocate temporary number
-                    c_speed = c_falcon.get_speed()
-
-                    if  detector.linked_detector.shape_contains(c_falcon) and
-                        c_health > 0 and c_speed == 0
+-- Display falcon count to players near senders
+for each player do
+    if current_player.biped != no_object then
+        for each object with label "teleporter" do
+            alias sender = allocate temporary object
+            sender = current_object
+            
+            if  not sender.is_of_type(hill_marker) -- not a custom teleport
+                and sender.zone != no_object
+                and sender.zone.shape_contains(current_player.biped)
+            then
+                -- Find matching obj_detector by spawn_sequence and team
+                for each object with label "obj_detector" do
+                    alias detector = allocate temporary object
+                    detector = current_object
+                    
+                    if sender.spawn_sequence == detector.spawn_sequence 
+                        and sender.team == detector.team
                     then
-                        available += 1
+                        alias available = global.number[3]
+                        available = detector.state
+                        ui_alert.set_text("Available Falcons: %n", available)
+                        ui_alert.set_visibility(current_player, true)
                     end
                 end
-
-                if available >= 0 then
-                    script_widget[0].set_text("Available falcons: %n", available)
-                    script_widget[0].set_visibility(c_player, true)
-                end
-            end
-
-            if not detector.shape_contains(c_player.biped) then
-                script_widget[0].set_text("")
-                script_widget[0].set_visibility(c_player, false)
             end
         end
     end
