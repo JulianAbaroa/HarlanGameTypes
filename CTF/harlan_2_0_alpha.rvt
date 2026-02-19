@@ -36,7 +36,7 @@
 -- FALCON DETECTION: Allows players to know if there's falcons on teleports before using them.
 --------------------------------------------------------------------------------
 
-alias VERSION = 6
+alias VERSION = 7
 alias FLAG_ZONE_RADIUS = 20
 
 enum map_areas
@@ -360,38 +360,21 @@ on init: do
     -- INIT FALCON DETECTION:
     -- Allows players to know if there's falcons on teleports before using them.
     ----------------------------------------------------------------------------
-    -- First, spawn child detection zones for all obj_detectors (falcon detection)
-    for each object with label "obj_detector" do
-        alias c_detector = current_object
-        
-        if c_detector.zone == no_object then
-            c_detector.zone = c_detector.place_at_me(hill_marker, none, never_garbage_collect | suppress_effect, 0, 0, 0, none)
-            c_detector.zone.set_shape(cylinder, 100, 20, 10)
-            c_detector.zone.set_shape_visibility(everyone)
-        end
+    for each object with label all_falcons do
+        current_object.zone = current_object.place_at_me(hill_marker, none, never_garbage_collect | suppress_effect, 0, 0, 0, none)
+        current_object.zone.set_shape(cylinder, 40, 20, 10)
+        current_object.zone.set_shape_visibility(everyone)
     end
 
-    -- Then, only spawn sender zones if there's a matching obj_detector
     for each object with label "teleporter" do
-        alias c_sender = allocate temporary object
-        c_sender = current_object
-        
-        if not c_sender.is_of_type(hill_marker) -- not a custom teleport
-            and c_sender.zone == no_object 
+        alias c_sender = current_object
+
+        if  not c_sender.is_of_type(hill_marker)
+            and c_sender.zone == no_object
         then
-            -- Check if there's a matching obj_detector
-            for each object with label "obj_detector" do
-                alias c_detector = allocate temporary object
-                c_detector = current_object
-                if c_sender.spawn_sequence == c_detector.spawn_sequence 
-                    and c_sender.team == c_detector.team
-                then
-                    -- Found a match, spawn sender's detection zone
-                    c_sender.zone = c_sender.place_at_me(hill_marker, none, never_garbage_collect | suppress_effect, 0, 0, 0, none)
-                    c_sender.zone.set_shape(cylinder, 16, 12, 4)
-                    c_sender.zone.set_shape_visibility(everyone)
-                end
-            end
+            c_sender.zone = c_sender.place_at_me(hill_marker, none, never_garbage_collect | suppress_effect, 0, 0, 0, none)
+            c_sender.zone.set_shape(cylinder, 16, 12, 4)
+            c_sender.zone.set_shape_visibility(everyone)
         end
     end
 
@@ -1518,64 +1501,37 @@ end
 -- FALCON DETECTION:
 -- Allows players to know if there's falcons on teleports before using them.
 --------------------------------------------------------------------------------
--- Count falcons at each obj_detector and store count
-for each object with label "obj_detector" do
-    alias detector = allocate temporary object
-    detector = current_object
-    
-    if detector.zone != no_object then
-        -- Count available falcons in this detector's zone
-        alias available = allocate temporary number
-        available = 0
-        
-        for each object with label all_falcons do
-            alias c_falcon = allocate temporary object
-            c_falcon = current_object
-
-            alias c_health = allocate temporary number
-            c_health = c_falcon.health
-
-            alias c_speed = allocate temporary number
-            c_speed = c_falcon.get_speed()
-            
-            if detector.zone.shape_contains(c_falcon) 
-                and c_health > 0 
-                and c_speed == 0
-            then
-                available += 1
-            end
-        end
-        
-        -- Store count in detector (reuse state slot)
-        detector.state = available
-    end
-end
-
--- Display falcon count to players near senders
 for each player do
     if current_player.biped != no_object then
         for each object with label "teleporter" do
             alias sender = allocate temporary object
             sender = current_object
-            
-            if  not sender.is_of_type(hill_marker) -- not a custom teleport
+
+            if  not sender.is_of_type(hill_marker)
                 and sender.zone != no_object
                 and sender.zone.shape_contains(current_player.biped)
             then
-                -- Find matching obj_detector by spawn_sequence and team
-                for each object with label "obj_detector" do
-                    alias detector = allocate temporary object
-                    detector = current_object
-                    
-                    if sender.spawn_sequence == detector.spawn_sequence 
-                        and sender.team == detector.team
+                alias available = global.number[3]
+                available = 0
+
+                for each object with label all_falcons do
+                    alias c_falcon = allocate temporary object
+                    c_falcon = current_object
+
+                    alias c_health = allocate temporary number
+                    c_health = c_falcon.health
+
+                    if  c_falcon.spawn_sequence == sender.spawn_sequence
+                        and c_falcon.zone != no_object
+                        and c_falcon.zone.shape_contains(c_falcon)
+                        and c_health > 0
                     then
-                        alias available = global.number[3]
-                        available = detector.state
-                        ui_alert.set_text("Available Falcons: %n", available)
-                        ui_alert.set_visibility(current_player, true)
+                        available += 1
                     end
                 end
+
+                ui_alert.set_text("Available Falcons: %n", available)
+                ui_alert.set_visibility(current_player, true)
             end
         end
     end
