@@ -4,7 +4,6 @@
 -- ODD ROUND: determine if round is odd-numbered so team names can be switched.
 -- INIT CUSTOM TELEPORTS: Converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
 -- QOL TELEPORTS: teleporter waypoints with helpful text.
--- INIT FALCON DETECTION: Allows players to know if there's falcons on teleports before using them.
 -- INIT PUSH TELEPORTS: Systems that prevents reciever teleports from being blocked by falcons.
 -- SCALE SYSTEM: Allows objects to be scaled in-game.
 --------------------------------------------------------------------------------
@@ -34,12 +33,10 @@
 -- CUSTOM TELEPORTS: Converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
 -- BLINKSHOT: Players who destroy monitors labeled as "blinkshot" are teleported to their position.
 -- SPECIAL WEAPON TRAITS: apply limited traits to players holding certain weapons.
--- FALCON DETECTION: Allows players to know if there's falcons on teleports before using them.
 -- PUSH TELEPORTS: Systems that prevents reciever teleports from being blocked by falcons.
 -- PREVENT FLAG GRIEFING: Resets flag if flag should be at home but is away.
 --------------------------------------------------------------------------------
 -- DEATH BLINKSHOT: Players who destroy monitors labeled as "blinkshot" are teleported to their position.
--- DEATH FALCON: Allows players to know if there's falcons on teleports before using them.
 --------------------------------------------------------------------------------
 
 alias VERSION = 0
@@ -370,33 +367,6 @@ on init: do
 
                 if c_teleport.spawn_sequence == map_areas.road_blue then
                     c_teleport.set_waypoint_text("Road Blue")
-                end
-            end
-        end
-    end
-
-    ----------------------------------------------------------------------------
-    -- INIT FALCON DETECTION:
-    -- Allows players to know if there's falcons on teleports before using them.
-    ----------------------------------------------------------------------------
-    if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
-        for each object with label "teleporter" do
-            alias c_teleport = allocate temporary object
-            c_teleport = current_object
-
-            if  not c_teleport.is_of_type(hill_marker)
-                and not c_teleport.is_of_type(capture_plate)
-                and c_teleport.zone == no_object
-                and c_teleport.spawn_sequence > 0
-            then
-                for each object with label all_falcons do
-                    if  current_object.spawn_sequence == c_teleport.spawn_sequence
-                        and c_teleport.zone == no_object
-                    then
-                        c_teleport.zone = c_teleport.place_at_me(hill_marker, none, never_garbage_collect | suppress_effect, 0, 0, 0, none)
-                        c_teleport.zone.set_shape(cylinder, 12, 12, 4)
-                        c_teleport.zone.set_shape_visibility(no_one)
-                    end
                 end
             end
         end
@@ -1518,75 +1488,6 @@ if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
 end
 
 --------------------------------------------------------------------------------
--- FALCON DETECTION:
--- Allows players to know if there's falcons on teleports before using them.
---------------------------------------------------------------------------------
-if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
-    for each object with label all_falcons do
-        alias c_falcon = allocate temporary object
-        c_falcon = current_object
-
-        alias c_health = allocate temporary number
-        c_health = c_falcon.health
-
-        if  c_falcon.spawn_sequence > 0
-            and c_falcon.zone == no_object
-            and c_health > 0
-        then
-            c_falcon.zone = c_falcon.place_at_me(hill_marker, none, never_garbage_collect | suppress_effect, 0, 0, 0, none)
-            c_falcon.zone.set_shape(cylinder, 40, 20, 10)
-            c_falcon.zone.set_shape_visibility(no_one)
-        end
-    end
-
-    for each player do
-        if current_player.biped != no_object then
-            for each object with label "teleporter" do
-                alias sender = allocate temporary object
-                sender = current_object
-
-                if  not sender.is_of_type(hill_marker)
-                    and not sender.is_of_type(capture_plate)
-                    and sender.zone != no_object
-                    and sender.zone.shape_contains(current_player.biped)
-                then
-                    alias available = global.number[3]
-                    available = 0
-
-                    for each object with label all_falcons do
-                        alias c_falcon = allocate temporary object
-                        c_falcon = current_object
-
-                        alias c_health = allocate temporary number
-                        c_health = c_falcon.health
-
-                        if  c_falcon.spawn_sequence == sender.spawn_sequence
-                            and c_falcon.zone != no_object
-                            and c_falcon.zone.shape_contains(c_falcon)
-                            and c_health > 0
-                        then
-                            available += 1
-                        end
-                    end
-
-                    if available <= 0 then
-                        ui_alert.set_text("No Falcons Available")
-                        
-                    altif available == 1 then
-                        ui_alert.set_text("1 Falcon Available")
-
-                    altif available >= 2 then
-                        ui_alert.set_text("%n Falcons Available", available)
-                    end
-                    
-                    ui_alert.set_visibility(current_player, true)
-                end
-            end
-        end
-    end
-end
-
---------------------------------------------------------------------------------
 -- PUSH TELEPORTS:
 -- Systems that prevents reciever teleports from being blocked by falcons.
 --------------------------------------------------------------------------------
@@ -1674,17 +1575,6 @@ on object death: do
             if killed_object.has_forge_label("blinkshot") then
                 killer_player.blinkshot = killed_object.place_at_me(hill_marker, "blinkshot", none, 0, 0, 0, none)
             end
-        end
-    end
-
-    ----------------------------------------------------------------------------
-    -- DEATH FALCON:
-    -- Allows players to know if there's falcons on teleports before using them.
-    ----------------------------------------------------------------------------
-    if killed_object.has_forge_label(all_falcons) then
-        if killed_object.zone != no_object then
-            killed_object.zone.delete() -- clean up old hill markers
-            killed_object.zone = no_object
         end
     end
 end
