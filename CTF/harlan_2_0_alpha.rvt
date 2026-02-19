@@ -367,14 +367,22 @@ on init: do
     end
 
     for each object with label "teleporter" do
-        alias c_sender = current_object
+        alias c_sender = allocate temporary object
+        c_sender = current_object
 
         if  not c_sender.is_of_type(hill_marker)
             and c_sender.zone == no_object
+            and c_sender.spawn_sequence != 0
         then
-            c_sender.zone = c_sender.place_at_me(hill_marker, none, never_garbage_collect | suppress_effect, 0, 0, 0, none)
-            c_sender.zone.set_shape(cylinder, 16, 12, 4)
-            c_sender.zone.set_shape_visibility(everyone)
+            for each object with label all_falcons do
+                if  current_object.spawn_sequence == c_sender.spawn_sequence
+                    and c_sender.zone == no_object
+                then
+                    c_sender.zone = c_sender.place_at_me(hill_marker, none, never_garbage_collect | suppress_effect, 0, 0, 0, none)
+                    c_sender.zone.set_shape(cylinder, 16, 12, 4)
+                    c_sender.zone.set_shape_visibility(everyone)
+                end
+            end
         end
     end
 
