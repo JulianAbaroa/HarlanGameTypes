@@ -5,6 +5,7 @@
 -- INIT CUSTOM TELEPORTS: Converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
 -- QOL TELEPORTS: teleporter waypoints with helpful text.
 -- INIT FALCON DETECTION: Allows players to know if there's falcons on teleports before using them.
+-- INIT PUSH TELEPORTS: Systems that prevents reciever teleports from being blocked by falcons.
 -- SCALE SYSTEM: Allows objects to be scaled in-game.
 --------------------------------------------------------------------------------
 -- LOADOUT PALETTES: set and display loadout palettes.
@@ -34,6 +35,8 @@
 -- BLINKSHOT: Players who destroy monitors labeled as "blinkshot" are teleported to their position.
 -- SPECIAL WEAPON TRAITS: apply limited traits to players holding certain weapons.
 -- FALCON DETECTION: Allows players to know if there's falcons on teleports before using them.
+-- PUSH TELEPORTS: Systems that prevents reciever teleports from being blocked by falcons.
+-- PREVENT FLAG GRIEFING: Resets flag if flag should be at home but is away.
 --------------------------------------------------------------------------------
 
 alias VERSION = 7
@@ -52,7 +55,9 @@ enum map_areas
     up = 9
     down = 10
     bottom = 11
-    mid_road = 12
+    top = 12
+    road_red = 13
+    road_blue = 14
 end
 
 enum sides
@@ -112,8 +117,11 @@ alias announce_start_timer       = player.timer[2]
 alias state                 = object.number[0] -- flag state; see (flag_state) enum
 alias delay                 = object.number[0]
 alias scale_result          = object.number[0]
+alias is_blocked            = object.number[0]
 alias math_remainder        = object.number[1]
+alias is_prepared           = object.number[1]
 alias announced_flag_take   = object.number[2]
+alias is_banned             = object.number[2]
 alias announced_flag_drop   = object.number[3]
 alias zone                  = object.object[0] -- flag zone; boundary centered on flag
 alias linked_teleport       = object.object[0]
@@ -121,8 +129,10 @@ alias saved_teleport        = object.object[0]
 alias blinkshot             = object.object[0]
 alias last_carrier          = object.player[0]
 alias reset_timer           = object.timer[0]
+alias grace_timer           = object.timer[0]
 alias return_timer          = object.timer[1]
 alias notification_throttle = object.timer[2]
+
 
 alias flag_point = team.object[0] -- spawn and drop point
 alias flag       = team.object[1]
@@ -212,11 +222,9 @@ on init: do
             c_teleport.set_waypoint_priority(low)   
 
             if c_teleport.is_of_type(hill_marker) then
-                c_teleport.set_waypoint_text("Sender")
                 c_teleport.set_shape_visibility(everyone)  
                                 
             altif c_teleport.is_of_type(capture_plate) then
-                c_teleport.set_waypoint_text("Reciever")
                 c_teleport.set_shape_visibility(no_one)
             end
         end
@@ -349,8 +357,16 @@ on init: do
                     c_teleport.set_waypoint_text("Bottom")
                 end
 
-                if c_teleport.spawn_sequence == map_areas.mid_road then
-                    c_teleport.set_waypoint_text("Mid-Road")
+                if c_teleport.spawn_sequence == map_areas.top then
+                    c_teleport.set_waypoint_text("Top")
+                end
+
+                if c_teleport.spawn_sequence == map_areas.road_red then
+                    c_teleport.set_waypoint_text("Road Red")
+                end
+
+                if c_teleport.spawn_sequence == map_areas.road_blue then
+                    c_teleport.set_waypoint_text("Road Blue")
                 end
             end
         end
@@ -384,6 +400,20 @@ on init: do
                 end
             end
         end
+    end
+
+    ----------------------------------------------------------------------------
+    -- INIT PUSH TELEPORTS: 
+    -- Systems that prevents reciever teleports from being blocked by falcons.
+    ----------------------------------------------------------------------------
+    for each object with label "push_receiver" do
+        alias c_receiver = current_object
+
+        c_receiver.is_blocked = 0
+        c_receiver.set_shape(cylinder, 20, 15, 0)
+        c_receiver.set_waypoint_range(0, 20)
+        c_receiver.set_waypoint_text("Do not block!")
+        c_receiver.set_waypoint_visibility(no_one)
     end
 
     ----------------------------------------------------------------------------
@@ -1538,9 +1568,91 @@ for each player do
                     end
                 end
 
-                ui_alert.set_text("Available Falcons: %n", available)
+                if available <= 0 then
+                    ui_alert.set_text("No Falcons Available")
+                    
+                altif available == 1 then
+                    ui_alert.set_text("1 Falcon Available")
+
+                altif available >= 2 then
+                    ui_alert.set_text("%n Falcons Available", available)
+                end
+                
                 ui_alert.set_visibility(current_player, true)
             end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- PUSH TELEPORTS:
+-- Systems that prevents reciever teleports from being blocked by falcons.
+--------------------------------------------------------------------------------
+for each object with label all_falcons do
+    alias c_falcon = allocate global.object
+    c_falcon = current_object
+
+    if c_falcon.is_prepared == 0 then
+        c_falcon.is_prepared = 1
+
+        c_falcon.grace_timer.set_rate(0%)
+        c_falcon.grace_timer = 0
+        c_falcon.is_banned = 0
+    end
+
+    alias is_blocking = allocate temporary number
+    is_blocking = 0
+
+    for each object with label "push_receiver" do
+        alias c_receiver = current_object
+
+        if c_receiver.shape_contains(c_falcon) then
+            c_falcon.grace_timer.set_rate(100%)
+            c_receiver.is_blocked = 1
+            is_blocking = 1
+
+            if c_falcon.grace_timer >= 15 or c_falcon.is_banned == 1 then
+                c_falcon.apply_upward_impulse()
+                c_falcon.is_banned = 1
+            end
+        end
+    end
+
+    if is_blocking == 0 then
+        c_falcon.grace_timer.set_rate(0%)
+        c_falcon.grace_timer = 0
+    end
+end
+
+-- Visual feedback
+for each object with label "push_receiver" do
+    alias c_receiver = current_object
+
+    if c_receiver.is_blocked == 1 then
+        c_receiver.set_shape_visibility(everyone)
+        c_receiver.set_waypoint_priority(blink)
+        c_receiver.set_waypoint_visibility(everyone)
+
+    altif c_receiver.is_blocked == 0 then
+        c_receiver.set_shape_visibility(no_one)
+        c_receiver.set_waypoint_priority(normal)
+        c_receiver.set_waypoint_visibility(no_one)
+    end
+end
+
+--------------------------------------------------------------------------------
+-- PREVENT FLAG GRIEFING:
+-- Resets flag if flag should be at home but is away.
+--------------------------------------------------------------------------------
+for each team do
+    alias current_flag = allocate temporary object
+    current_flag = current_team.flag
+
+    if  current_flag != no_object
+        and current_flag.state == flag_state.at_home
+    then
+        if not current_team.flag_point.shape_contains(current_flag) then
+            current_flag.delete()
         end
     end
 end
