@@ -1,271 +1,24 @@
 -- Credits to Weesee, Rabid and obviously the MCC Gametypers community.
-
--- Declarations.
-
--- Update system.
-declare global.object[0] with network priority local
-alias basis = global.object[0]
-
--- We use an "Anchor" object that stays still on the map to know where to spawn things.
-declare global.object[1] with network priority low
-alias sys_anchor = global.object[1]
-
--- This is the killer ball that kills the monitor.
-declare global.object[2] with network priority low
-alias sys_killer = global.object[2]
-
-
---Interface system.
-declare global.object[3] with network priority low
-alias sys_interface = global.object[3]
-
-declare global.number[0] with network priority low
-alias selected_scale_mode = global.number[0]
-
-declare global.number[1] with network priority low
-alias selected_invincibility_mode = global.number[1]
-
-declare global.team[0] with network priority low
-alias selected_interface_team = global.team[0]
-
-
--- Scale system.
-declare global.object[4] with network priority low
-alias logic_controller = global.object[4]
-
-declare global.number[2] with network priority low
-alias current_calculated_scale = global.number[2]
-
-declare global.number[3] with network priority low
-alias recursion_counter = global.number[3]
-
-declare global.number[4] with network priority low
-alias global_math_buffer = global.number[4]
-
--- Declarations.
-
-
-
-
-
--- Scale system
-
--- Properties of the Object being scaled
--- scale_result: Store the final % (e.g., 100, 200, 50) before applying it.
-alias scale_result = object.number[0]
-
--- math_remainder: Stores division residues for high-precision simulations.
-alias math_remainder = object.number[1]
-
--- scale_system: Define which formula to use (0=Nothing, 1=lineal, 2=x10, 3=high_precision).
--- This is read from the controller object (logic_controller).
-alias scale_system = object.number[0]
-
-enum scale_mode
-    nothing = 0
-    lineal = 1
-    x10 = 2
-    high_precision = 3
-end
-
-function math_precision_calculator()
-    alias subject = current_object
-
-    -- We increment the recursion counter to avoid infinite loops.
-    recursion_counter += 1
-
-    -- Start of the mathematical smoothing algorithm:
-    -- It takes the current size and saves it in the waste buffer.
-    subject.math_remainder = subject.scale_result
-
-    -- Divide the remainder by 33 (simulate 3%).
-    subject.math_remainder /= 33
-
-    -- It takes the current size, passes it to the global buffer and divides it by 228 (simulating 0.4%).
-    global_math_buffer = subject.scale_result
-    global_math_buffer /= 228
-
-    -- Add both fractional results to the total size.
-    -- This creates compound growth with each iteration.
-    subject.scale_result += subject.math_remainder
-    subject.scale_result += global_math_buffer
-
-    -- If the recursion counter has not yet reached the limit defined in current_calculated_scale...
-    inline: if recursion_counter < current_calculated_scale then
-        -- ...it calls itself to continue calculating.
-        math_precision_calculator()
-    end
-end
-
-function limit_checker()
-    alias subject = current_object
-
-    -- If the spawn_sequence is exactly -10, force minimum scale.
-    inline: if subject.spawn_sequence == -10 then
-        current_calculated_scale = 1
-    end
-end
-
-function scaling_system()
-    for each object with label "scale" do
-        alias subject = current_object
-
-        -- We initialize the current scale with the value of the Spawn Sequence.
-        current_calculated_scale = subject.spawn_sequence
-
-        -- Mode 0: Lineal
-        inline: if logic_controller.scale_system == scale_mode.lineal then
-            -- If the spawn sequence is negative (e.g., -15), apply the expansion formula.
-            inline: if subject.spawn_sequence < -10 then
-                -- Formula: (x + 101) * 2
-                current_calculated_scale += 101
-                current_calculated_scale *= 2
-
-                -- Fine adjustments according to specific negative ranges:
-                inline: if subject.spawn_sequence > -71 then
-                    current_calculated_scale *= 2
-                end
-
-                inline: if subject.spawn_sequence > -41 then
-                    -- Equivalent to multiplying by 1.5
-                    current_calculated_scale *= 3
-                    current_calculated_scale /= 2 
-                end
-            end
-
-            -- Final conversion to base percentage: (x * 10) + 100
-            current_calculated_scale *= 10
-            current_calculated_scale += 100
-
-            -- Offset settings for large negative values
-            inline: if subject.spawn_sequence < -10 then
-                current_calculated_scale += 1000
-
-                inline: if subject.spawn_sequence > -71 then
-                    current_calculated_scale += -600
-                end
-
-                inline: if subject.spawn_sequence > -41 then
-                    current_calculated_scale += -1200
-                end
-            end
-
-            -- Check if we fell into the forbidden value (-10)
-            limit_checker()
-        end
-
-        -- Mode 1: x10 Multiplier
-        inline: if logic_controller.scale_system == scale_mode.x10 then
-            current_calculated_scale *= 10
-
-            inline: if subject.spawn_sequence < -10 then
-                current_calculated_scale *= 2
-
-                inline: if subject.spawn_sequence > -81 then
-                    current_calculated_scale += 800
-                end
-            end
-
-            inline: if subject.spawn_sequence < -80 then
-                current_calculated_scale *= 2
-                current_calculated_scale += -800
-            end
-
-            current_calculated_scale += 100
-            limit_checker()
-        end
-
-        -- Mode 3: High Precision
-        inline: if logic_controller.scale_system == scale_mode.high_precision then
-            -- Initial base of 100%
-            subject.scale_result = 100
-            current_calculated_scale = subject.spawn_sequence
-
-            -- If it is negative, we apply a multiplier of x5
-            inline: if subject.spawn_sequence < 0 then
-                current_calculated_scale *= 5
-                subject.scale_result += current_calculated_scale
-
-                -- Special case: Spawn Sequence -20 strength scales to 1%
-                inline: if subject.spawn_sequence == -20 then
-                    subject.scale_result = 1
-                end
-
-                -- Special calculation for values ​​less than -20
-                inline: if subject.spawn_sequence < -20 then
-                    current_calculated_scale = 100
-                    current_calculated_scale += subject.spawn_sequence
-                    current_calculated_scale += 101
-                end
-            end
-
-            -- If it is outside the safe range (-20 to 0), we activate recursion.
-            inline: if subject.spawn_sequence < -20 or subject.spawn_sequence > 0 then
-                subject.scale_result = 100
-                
-                -- Reset global counter
-                recursion_counter = 0
-
-                math_precision_calculator()
-            end
-
-            -- We assign the final calculated result to the current value
-            current_calculated_scale = subject.scale_result
-        end
-
-        -- We save the final calculation in the object's memory for future reference.
-        subject.scale_result = current_calculated_scale
-
-        -- We performed the actual resizing in the game engine.
-        subject.set_scale(current_calculated_scale)
-
-        -- We copy rotation on itself to force the physics update.
-        subject.copy_rotation_from(subject, false)
-    end
-end
-
--- Scale system
-
-
-
-
-
--- Invincibility system
-
-alias invincibility_system = object.number[1]
-
-enum invincibility_mode
-    nothing = 0 
-    active = 1
-    inactive = 2
-end
-
-function invincibility_system()
-    -- If this system is active
-    inline: if logic_controller.invincibility_system != invincibility_mode.nothing then
-        for each player do
-            alias c_player = current_player
-
-            -- If the invincibility should be active.
-            inline: if logic_controller.invincibility_system == invincibility_mode.active then
-                c_player.biped.set_invincibility(1)
-
-            inline: altif logic_controller.invincibility_system == invincibility_mode.inactive then
-                c_player.biped.set_invincibility(0)
-            end
-        end
-    end
-end
-
--- Invincibility system
-
-
-
-
-
--- QoL Falcon.
-
-alias map_area = object.number[0]
+-- Harlan Forge 1.1
+--------------------------------------------------------------------------------
+-- HARLAN VERSION: detect harlan_version object for compatibility checks.
+-- INIT UPDATE SYSTEM: Allows running code on a forge gametype.
+--------------------------------------------------------------------------------
+-- UPDATE SYSTEM: Allows running code on a forge gametype.
+-- INITIAL ANNOUNCE: Announce welcome messages.
+-- CUSTOM TELEPORTS: Converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
+-- QOL TELEPORTS: teleporter waypoints with helpful text.
+-- PUSH TELEPORTS: Systems that prevents reciever teleports from being blocked by falcons.
+-- QOL FALCON: notify players when falcons have spawned.
+-- BLINKSHOT: Players who destroy monitors labeled as "blinkshot" are teleported to their position.
+-- SCALE SYSTEM: Allows objects to be scaled in-game.
+-- PLAYER INTERFACE: Allows players to interact with internal harlan forge configuration.
+-- INVINCIVILITY SYSTEM: Allows players to be invincible whenever they want.
+--------------------------------------------------------------------------------
+-- DEATH BLINKSHOT: Players who destroy monitors labeled as "blinkshot" are teleported to their position.
+--------------------------------------------------------------------------------
+
+alias VERSION = 0
 
 enum map_areas
     nothing = 0
@@ -280,718 +33,110 @@ enum map_areas
     up = 9
     down = 10
     bottom = 11
+    top = 12
+    road_red = 13
+    road_blue = 14
 end
 
-function qol_falcon()
-    -- For each falcon do
-    for each object with label 1 do
-        alias c_falcon = current_object
-
-        -- To avoid show_message_to() spamming.
-        inline: if not c_falcon.has_forge_label("scale") then
-            inline: if c_falcon.spawn_sequence == map_areas.middle and c_falcon.map_area != map_areas.middle then
-                game.show_message_to(all_players, none, "Middle falcon setted")
-                c_falcon.map_area = map_areas.middle
-    
-            inline: altif c_falcon.spawn_sequence == map_areas.valley and c_falcon.map_area != map_areas.valley then
-                game.show_message_to(all_players, none, "Valley falcon setted")
-                c_falcon.map_area = map_areas.valley
-    
-            inline: altif c_falcon.spawn_sequence == map_areas.hangar and c_falcon.map_area != map_areas.hangar then
-                game.show_message_to(all_players, none, "Hangar falcon setted")
-                c_falcon.map_area = map_areas.hangar
-            
-            inline: altif c_falcon.spawn_sequence == map_areas.sea_red and c_falcon.map_area != map_areas.sea_red then
-                game.show_message_to(all_players, none, "Sea red falcon setted")
-                c_falcon.map_area = map_areas.sea_red
-    
-            inline: altif c_falcon.spawn_sequence == map_areas.sea_blue and c_falcon.map_area != map_areas.sea_blue then
-                game.show_message_to(all_players, none, "Sea blue falcon setted")
-                c_falcon.map_area = map_areas.sea_blue
-    
-            inline: altif c_falcon.spawn_sequence == map_areas.red_base and c_falcon.map_area != map_areas.red_base then
-                game.show_message_to(all_players, none, "Red base falcon setted")
-                c_falcon.map_area = map_areas.red_base
-    
-            inline: altif c_falcon.spawn_sequence == map_areas.blue_base and c_falcon.map_area != map_areas.blue_base then
-                game.show_message_to(all_players, none, "Blue base falcon setted")
-                c_falcon.map_area = map_areas.blue_base
-
-            inline: altif c_falcon.spawn_sequence == map_areas.centre_island and c_falcon.map_area != map_areas.centre_island then
-                game.show_message_to(all_players, none, "Island falcon setted")
-                c_falcon.map_area = map_areas.centre_island
-            end
-
-            inline: if c_falcon.spawn_sequence < map_areas.middle or c_falcon.spawn_sequence > map_areas.centre_island then
-                if c_falcon.map_area != map_areas.nothing then
-                    game.show_message_to(all_players, none, "No area selected for this falcon")
-                end
-
-                c_falcon.map_area = map_areas.nothing
-            end
-        end
-    end
+enum invincibility_mode
+    nothing = 0 
+    active = 1
+    inactive = 2
 end
 
--- QoL Falcon.
-
-
-
-
-
--- QoL Teleports.
-
-function qol_teleports()
-    for each object with label "teleporter" do
-        alias c_teleport = current_object
-
-        if c_teleport.spawn_sequence >= 0 then
-            inline: if not c_teleport.is_of_type(capture_plate) and not c_teleport.is_of_type(hill_marker) then
-                -- Shape
-                c_teleport.set_shape_visibility(everyone)
-    
-                -- Waypoint
-                c_teleport.set_waypoint_visibility(everyone)
-                c_teleport.set_waypoint_priority(low)
-                c_teleport.set_waypoint_range(0, 20)
-    
-                if c_teleport.spawn_sequence == map_areas.middle and c_teleport.map_area != map_areas.middle then
-                    c_teleport.set_waypoint_text("Middle")
-                    c_teleport.map_area = map_areas.middle
-    
-                inline: altif c_teleport.spawn_sequence == map_areas.valley and c_teleport.map_area != map_areas.valley then
-                    c_teleport.set_waypoint_text("Valley")
-                    c_teleport.map_area = map_areas.valley
-                
-                inline: altif c_teleport.spawn_sequence == map_areas.hangar and c_teleport.map_area != map_areas.hangar then
-                    c_teleport.set_waypoint_text("Hangar")
-                    c_teleport.map_area = map_areas.hangar
-    
-                inline: altif c_teleport.spawn_sequence == map_areas.sea_red and c_teleport.map_area != map_areas.sea_red then
-                    c_teleport.set_waypoint_text("Sea Red")
-                    c_teleport.map_area = map_areas.sea_red
-    
-                inline: altif c_teleport.spawn_sequence == map_areas.sea_blue and c_teleport.map_area != map_areas.sea_blue then
-                    c_teleport.set_waypoint_text("Sea Blue")
-                    c_teleport.map_area = map_areas.sea_blue
-    
-                inline: altif c_teleport.spawn_sequence == map_areas.red_base and c_teleport.map_area != map_areas.red_base then
-                    c_teleport.set_waypoint_text("Red Base")
-                    c_teleport.map_area = map_areas.red_base
-    
-                inline: altif c_teleport.spawn_sequence == map_areas.blue_base and c_teleport.map_area != map_areas.blue_base then
-                    c_teleport.set_waypoint_text("Blue Base")
-                    c_teleport.map_area = map_areas.blue_base
-    
-                inline: altif c_teleport.spawn_sequence == map_areas.centre_island and c_teleport.map_area != map_areas.centre_island then
-                    c_teleport.set_waypoint_text("Island")
-                    c_teleport.map_area = map_areas.centre_island
-                    
-                inline: altif c_teleport.spawn_sequence == map_areas.up and c_teleport.map_area != map_areas.up then
-                    c_teleport.set_waypoint_text("Up")
-                    c_teleport.map_area = map_areas.up
-                
-                inline: altif c_teleport.spawn_sequence == map_areas.down and c_teleport.map_area != map_areas.down then
-                    c_teleport.set_waypoint_text("Down")
-                    c_teleport.map_area = map_areas.down
-                
-                inline: altif c_teleport.spawn_sequence == map_areas.bottom and c_teleport.map_area != map_areas.bottom then
-                    c_teleport.set_waypoint_text("Bottom")
-                    c_teleport.map_area = map_areas.bottom
-                end
-    
-                inline: if c_teleport.spawn_sequence < map_areas.middle or c_teleport.spawn_sequence > map_areas.bottom then
-                    c_teleport.set_waypoint_visibility(no_one)
-                    c_teleport.map_area = map_areas.nothing
-                end
-            end
-        end
-    end
-end
-
--- QoL Teleports.
-
-
-
-
-
--- Custom teleports
-
--- For c_teleport.
-alias linked_teleport = object.object[0]
-
--- For c_biped.
-alias saved_teleport = object.object[0]
-alias delay = object.number[0]
-
-function initialize_custom_teleport()
-    alias c_teleport = current_object
-
-    c_teleport.set_waypoint_range(0, 10)
-    c_teleport.set_waypoint_visibility(everyone)
-    c_teleport.set_waypoint_priority(low)   
-
-    inline: if c_teleport.is_of_type(hill_marker) then
-        c_teleport.set_waypoint_text("Sender")
-        c_teleport.set_shape_visibility(everyone)  
-            
-    inline: altif c_teleport.is_of_type(capture_plate) then
-        c_teleport.set_waypoint_text("Reciever")
-        c_teleport.set_shape_visibility(no_one)
-    end
-end
-
-function link_teleports()
-    for each object with label "teleporter" do
-        alias c_teleport = allocate global.object
-        c_teleport = current_object
-
-        inline: if c_teleport.spawn_sequence > 0 then
-            inline: if c_teleport.is_of_type(hill_marker) or c_teleport.is_of_type(capture_plate) then
-                for each object with label "teleporter" do
-                    alias temp_teleport = current_object  
-
-                    inline: if c_teleport.spawn_sequence > 0 then
-                        inline: if temp_teleport.is_of_type(hill_marker) or temp_teleport.is_of_type(capture_plate) then
-                            -- If these teleports are not the same one.
-                            inline: if c_teleport != temp_teleport then
-                                -- If these teleports have to link together.
-                                inline: if temp_teleport.spawn_sequence == c_teleport.spawn_sequence then
-                                    c_teleport.linked_teleport = temp_teleport
-                                    temp_teleport.linked_teleport = c_teleport
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-end
-
-function custom_teleports()
-    link_teleports()
-
-    for each object with label "teleporter" do
-        alias c_teleport = current_object
-
-        inline: if c_teleport.spawn_sequence > 0 then
-            inline: if c_teleport.is_of_type(hill_marker) or c_teleport.is_of_type(capture_plate) then
-                initialize_custom_teleport()
-            end
-
-            -- If this teleport has a linked teleport.
-            inline: if c_teleport.linked_teleport != no_object then
-                -- Main logic
-                inline: if c_teleport.is_of_type(hill_marker) then
-                    for each player do
-                        alias c_player = current_player
-
-                        alias c_biped = allocate global.object
-                        c_biped = c_player.biped
-
-                        -- If a player has entered this custom teleport.
-                        inline: if c_teleport.shape_contains(c_biped) and c_biped.saved_teleport == no_object then
-                            alias c_weapon = allocate global.object
-                            c_weapon = c_player.get_weapon(primary)
-
-                            -- If this player has a flag.
-                            inline: if c_weapon.is_of_type(flag) then
-                                -- If the custom teleport and the flag are from the same team.
-                                inline: if c_teleport.team == c_weapon.team then
-                                    c_biped.attach_to(c_teleport.linked_teleport, 0, 0, 0, relative)
-                                    c_biped.saved_teleport = c_teleport.linked_teleport
-                                end
-                            
-                            inline: altif not c_weapon.is_of_type(flag) then
-                                c_biped.attach_to(c_teleport.linked_teleport, 0, 0, 0, relative)
-                                c_biped.saved_teleport = c_teleport.linked_teleport
-                            end
-                        end
-                            
-                        --If this player has a saved teleport
-                        inline: if c_biped.saved_teleport != no_object then
-                            -- If this player is not inside the saved teleport's shape.
-                            inline: if not c_biped.saved_teleport.shape_contains(c_biped) then
-                                c_biped.saved_teleport = no_object
-                                c_biped.delay = 0
-                            end
-        
-                            c_biped.delay += 1
-        
-                            inline: if c_biped.delay == 50 then
-                                c_biped.detach()
-                                c_biped.delay = 0
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-end
-
--- Custom teleports
-
-
-
-
-
--- Push teleports.
-
--- For c_teleport.
-alias is_blocked = object.number[0]
-alias send_feedback = object.number[2]
-alias previous_ss = object.number[3]
-
--- For c_falcon.
-alias is_banned = object.number[1]
-alias grace_timer = object.timer[0]
-
-function push_teleports()
-    for each object with label "teleporter" do
-        alias c_teleport = current_object
-
-        inline: if c_teleport.spawn_sequence == -1 then
-            c_teleport.previous_ss = -1
-            c_teleport.is_blocked = 0
-
-            c_teleport.set_shape(cylinder, 20, 15, 0)
-            c_teleport.set_waypoint_range(0, 20)
-            c_teleport.set_waypoint_text("Do not block!")
-
-            inline: if c_teleport.send_feedback == 1 then
-                game.show_message_to(all_players, none, "Push teleport setted")
-                c_teleport.send_feedback = 0
-            end
-        end
-
-        inline: if c_teleport.spawn_sequence != -1 then
-            inline: if c_teleport.previous_ss == -1 or c_teleport.previous_ss == 0 then
-                c_teleport.previous_ss = c_teleport.spawn_sequence
-                c_teleport.send_feedback = 1
-            end
-        end
-    end
-
-    -- For each falcon do
-    for each object with label 1 do
-        alias c_falcon = allocate global.object
-        c_falcon = current_object
-
-        alias is_blocking = allocate global.number
-        is_blocking = 0
-
-        for each object with label "teleporter" do
-            alias c_teleport = current_object
-
-            inline: if c_teleport.spawn_sequence == -1 and c_teleport.shape_contains(c_falcon) then
-                c_falcon.grace_timer.set_rate(100%)
-                c_teleport.is_blocked = 1
-                is_blocking = 1
-
-                inline: if c_falcon.grace_timer >= 15 or c_falcon.is_banned == 1 then
-                    c_falcon.apply_upward_impulse()
-                    c_falcon.is_banned = 1
-                end
-            end
-        end
-
-        inline: if is_blocking == 0 then
-            c_falcon.grace_timer.set_rate(0%)
-            c_falcon.grace_timer = 0
-        end
-    end
-
-    for each object with label "teleporter" do
-        alias c_teleport = current_object
-
-        inline: if c_teleport.spawn_sequence == -1 then
-            inline: if c_teleport.is_blocked == 1 then
-                c_teleport.set_shape_visibility(everyone)
-                c_teleport.set_waypoint_priority(blink)
-                c_teleport.set_waypoint_visibility(everyone)
-
-            inline: altif c_teleport.is_blocked == 0 then
-                c_teleport.set_shape_visibility(no_one)
-                c_teleport.set_waypoint_priority(normal)
-                c_teleport.set_waypoint_visibility(no_one)
-            end
-        end
-    end
-end
-
--- Push teleports
-
-
-
-
-
--- Blinkshot
-
--- For blink_spawn
-alias blinkshot = object.object[0]
-
--- For c_player
-alias blinkshot = player.object[0]
-
--- For killed_blink
-alias delay = object.number[0]
-
-function blinkshot()
-    for each object with label "blink_spawn" do
-        alias blink_spawn = current_object
-
-        -- Only spawn the blinks when the spawn sequence is set to one.
-        inline: if blink_spawn.spawn_sequence == 1 then
-            inline: if blink_spawn.blinkshot == no_object then
-                blink_spawn.blinkshot = blink_spawn.place_at_me(monitor, "blinkshot", none, 0, 0, 0, none)
-                blink_spawn.blinkshot.set_scale(150)
-                blink_spawn.blinkshot.set_waypoint_priority(low)
-                blink_spawn.blinkshot.set_waypoint_visibility(everyone)
-                blink_spawn.blinkshot.set_waypoint_range(0, 100)
-            end
-        end
-    end
-
-    for each object with label "blinkshot" do
-        alias blinkshot = current_object
-        blinkshot.shields = 0
-        blinkshot.health = 1
-    end
-
-    for each player do
-        alias c_player = current_player
-        alias killed_blink = allocate global.object
-        killed_blink = c_player.blinkshot
-
-        inline: if killed_blink != no_object then
-            alias c_weapon = allocate global.object
-            c_weapon = c_player.get_weapon(primary)
-
-            inline: if c_weapon.is_of_type(flag) then
-                killed_blink.delete()
-            end
-
-            c_player.biped.attach_to(killed_blink, 0, 0, 0, relative)
-            c_player.biped.shields = 0
-
-            killed_blink.delay += 1
-            inline: if killed_blink.delay >= 40 then
-                c_player.biped.detach()
-                killed_blink.delete()
-            end
-        end
-    end
-end
-
--- Blinkshot
-
-
-
-
-
--- Comms.
-
--- For comms.
-alias linked_comms = object.object[0]
-alias instance = object.object[1]
-
-function link_comms()
-    for each object with label "comms_spawn" do
-        alias c_comms = allocate global.object
-        c_comms = current_object
-
-        inline: if c_comms.is_of_type(hill_marker) then
-            for each object with label "comms_spawn" do
-                alias temp_comms = current_object
-    
-                inline: if temp_comms.is_of_type(hill_marker) then
-                    -- If these comms spawns are not the same one.
-                    inline: if c_comms != temp_comms then
-                        -- If these comms spawns have to link together.
-                        inline: if c_comms.spawn_sequence == temp_comms.spawn_sequence then
-                            c_comms.linked_comms = temp_comms
-                            temp_comms.linked_comms = c_comms
-                        end
-                    end
-                end
-            end
-        end
-    end
-end
-
-function comms()
-    link_comms()
-
-    for each object with label "comms_spawn" do
-        alias c_comms = current_object
-
-        -- If the comms team is red team.
-        inline: if c_comms.team == team[0] then
-            -- If is a hill marker and doesnt have a saved comms instance.
-            inline: if c_comms.is_of_type(hill_marker) and c_comms.instance == no_object then
-                c_comms.instance = c_comms.place_at_me(monitor, "comms", none, 0, 0, 0, none)
-        
-                -- Initialize comms.
-                c_comms.instance.remove_weapon(primary, true)
-                c_comms.instance.set_waypoint_visibility(everyone)
-                c_comms.instance.set_waypoint_text("Comms")
-                c_comms.instance.set_waypoint_priority(low)
-                c_comms.instance.set_waypoint_range(0, 50)
-                c_comms.instance.set_scale(100)
-            end
-        
-        inline: altif c_comms.team == team[1] and c_comms.is_of_type(hill_marker) then
-            c_comms.set_shape(cylinder, 40, 20, 10)
-            c_comms.set_shape_visibility(everyone)            
-        end
-    
-        -- If the instance exists and is a monitor.
-        inline: if c_comms.instance != no_object and c_comms.instance.is_of_type(monitor) then
-            c_comms.instance.shields = 0
-            c_comms.instance.health = 1
-
-            -- If the instance is outside the comms spawn shape.
-            inline: if not c_comms.shape_contains(c_comms.instance) then
-                -- Restore its initial position.
-                c_comms.instance.attach_to(c_comms, 0, 0, 0, relative)
-                c_comms.instance.detach()
-            end
-        end
-    end
-end
-
--- Comms.
-
-
-
-
-
--- Capture the flag
-
-alias spawned_flag = object.object[0]
-alias assigned_team = object.team[0]
-
-function capture_the_flag()
-    for each object with label "ctf_flag_return" do
-        alias c_flag_stand = current_object
-
-        -- If this object is a flag stand.
-        inline: if c_flag_stand.is_of_type(flag_stand) then
-            inline: if c_flag_stand.team != c_flag_stand.assigned_team then
-                c_flag_stand.spawned_flag.delete()
-            end
-
-            -- If this flag stand doesn't have a spawned flag.
-            inline: if c_flag_stand.spawned_flag == no_object then
-                alias new_flag = allocate global.object
-
-                -- If this flag stand is from red team.
-                inline: if c_flag_stand.team == team[0] then
-                   new_flag = c_flag_stand.place_at_me(flag, none, none, 0, 0, 0, none)
-                   new_flag.team = team[0]
-
-                -- If this flag stand is from blue team.
-                inline: altif c_flag_stand.team == team[1] then
-                    new_flag = c_flag_stand.place_at_me(flag, none, none, 0, 0, 0, none)
-                    new_flag.team = team[1]
-
-                inline: altif c_flag_stand.team == team[2] then
-                    new_flag = c_flag_stand.place_at_me(flag, none, none, 0, 0, 0, none)
-                    new_flag.team = team[2]
-
-                inline: altif c_flag_stand.team == team[3] then
-                    new_flag = c_flag_stand.place_at_me(flag, none, none, 0, 0, 0, none)
-                    new_flag.team = team[3]
-
-                inline: altif c_flag_stand.team == team[4] then
-                    new_flag = c_flag_stand.place_at_me(flag, none, none, 0, 0, 0, none)
-                    new_flag.team = team[4]
-
-                inline: altif c_flag_stand.team == team[5] then
-                    new_flag = c_flag_stand.place_at_me(flag, none, none, 0, 0, 0, none)
-                    new_flag.team = team[5]
-
-                inline: altif c_flag_stand.team == team[6] then
-                    new_flag = c_flag_stand.place_at_me(flag, none, none, 0, 0, 0, none)
-                    new_flag.team = team[6]
-
-                inline: altif c_flag_stand.team == team[7] then
-                    new_flag = c_flag_stand.place_at_me(flag, none, none, 0, 0, 0, none)
-                    new_flag.team = team[7]
-
-                inline: altif c_flag_stand.team == neutral_team then
-                    new_flag = c_flag_stand.place_at_me(flag, none, none, 0, 0, 0, none)
-                    new_flag.team = neutral_team
-                end
-
-                inline: if new_flag != no_object then
-                    c_flag_stand.spawned_flag = new_flag
-                end
-
-                c_flag_stand.assigned_team = c_flag_stand.team
-            end
-        end
-    end
-end
-
--- Capture the flag
-
-
-
-
-
--- Interface system
-
--- Handles the feedback of selecting different scale modes with the interface object.
-function scale_system_interface()
-    -- If the interface is setted to lineal scale mode (value of 1)
-    inline: if sys_interface.spawn_sequence == scale_mode.lineal then
-        -- If the selected scale mode wasn't lineal before.
-        inline: if selected_scale_mode != scale_mode.lineal then
-            game.show_message_to(all_players, none, "Lineal scale mode")
-            logic_controller.scale_system = scale_mode.lineal
-            selected_scale_mode = scale_mode.lineal
-        end
-            
-    -- If the interface is setted to x10 scale mode (value of 2)
-    inline: altif sys_interface.spawn_sequence == scale_mode.x10 then
-        -- If the selected scale mode wasn't x10 before.
-        inline: if selected_scale_mode != scale_mode.x10 then
-            game.show_message_to(all_players, none, "x10 scale mode")
-            logic_controller.scale_system = scale_mode.x10
-            selected_scale_mode = scale_mode.x10
-        end
-
-    -- If the interface is setted to high precision scale mode (value of 3)
-    inline: altif sys_interface.spawn_sequence == scale_mode.high_precision then
-        -- If the selected scale mode wasn't high precision before.
-        inline: if selected_scale_mode != scale_mode.high_precision then
-            game.show_message_to(all_players, none, "High precision scale mode")
-            logic_controller.scale_system = scale_mode.high_precision
-            selected_scale_mode = scale_mode.high_precision
-        end
-
-    -- If it's not any mode of scaling, reset the selected scale mode.
-    inline: altif sys_interface.spawn_sequence != scale_mode.lineal then
-        inline: if sys_interface.spawn_sequence != scale_mode.x10 then
-            inline: if sys_interface.spawn_sequence != scale_mode.high_precision then
-                selected_scale_mode = scale_mode.nothing
-            end
-        end
-    end
-end
-
-function invincivility_system_interface()
-    -- If the interface is setted to active invincibility mode (value of 1)
-    inline: if sys_interface.spawn_sequence == invincibility_mode.active then
-        -- If the selected invincibility mode wasn't active before.
-        inline: if selected_invincibility_mode != invincibility_mode.active then
-            game.show_message_to(all_players, none, "Invincibility mode active")
-            logic_controller.invincibility_system = invincibility_mode.active
-            selected_invincibility_mode = invincibility_mode.active
-        end 
-
-    -- If the interface is setted to inactive invincibility mode (value of 2)
-    inline: altif sys_interface.spawn_sequence == invincibility_mode.inactive then
-        -- If the selected invincibility mode wasn't active before.
-        inline: if selected_invincibility_mode != invincibility_mode.inactive then
-            game.show_message_to(all_players, none, "Invincibility mode inactive")
-            logic_controller.invincibility_system = invincibility_mode.inactive
-            selected_invincibility_mode = invincibility_mode.inactive
-        end
-
-     -- If it's not any mode of invincibility, reset the selected invincibility mode.
-    inline: altif sys_interface.spawn_sequence != invincibility_mode.active then
-        inline: if sys_interface.spawn_sequence != invincibility_mode.inactive then
-            selected_invincibility_mode = invincibility_mode.nothing
-        end
-    end
-end
-
-
-function interface()
-    -- Initialize the interface.
-    inline: if sys_interface == no_object then
-        for each object with label "sys_config" do
-            alias interface = current_object
-
-            if interface.is_of_type(flag_stand)then
-                sys_interface = interface            
-            end
-        end
-    end 
-
-    inline: if sys_interface != no_object and sys_interface.has_forge_label("sys_config") then
-        -- If the selected team is red and it wasn't red team before.
-        inline: if sys_interface.team == team[0] then
-            inline: if selected_interface_team != team[0] then
-                -- Save the selected team as red team.
-                selected_interface_team = team[0]
-                game.show_message_to(all_players, none, "Change scale mode active")
-            end
-
-            scale_system_interface()
-
-        -- If the selected team is blue and it wasn't blue team before.
-        inline: altif sys_interface.team == team[1] then
-            inline: if selected_interface_team != team[1] then
-                -- Save the selected team as red team.
-                selected_interface_team = team[1]
-                game.show_message_to(all_players, none, "Change invincibility mode")
-            end
-
-            invincivility_system_interface()
-        
-        -- Reset the system selected
-        inline: altif sys_interface.team != team[0] and sys_interface.team != team[1] and selected_interface_team != no_team then
-            selected_interface_team = no_team
-            game.show_message_to(all_players, none, "No system selected")
-        end
-
-    -- if it's not any team, reset the selected team (probably we add more options as teams to this interface)
-    inline: altif sys_interface.team != team[0] and sys_interface.team != team[1] and selected_interface_team != no_team then
-        selected_interface_team = no_team
-    end
-end
-
--- Interface system
-
-
-
-
-
--- Update system
-
-alias killer = object.object[0]
-alias victim = object.object[1]
-
-function reset_anchor_pos()
-   sys_anchor.victim.detach()
-
-   sys_anchor.attach_to(sys_anchor.victim, 0, 0, 0, absolute)
-   sys_anchor.detach()
-end
-
-function step_up_sequence()
-   sys_anchor.victim.attach_to(sys_anchor, 0, 0, 127, absolute)
-   reset_anchor_pos()
-
-   sys_anchor.victim.attach_to(sys_anchor, 0, 0, 127, absolute)
-   reset_anchor_pos()
-end
+alias all_flags = 0
+alias all_falcons = 1
+
+alias ui_alert = script_widget[0]
+
+alias selected_invincibility_mode   = global.number[0]
+alias current_calculated_scale      = global.number[1]
+alias recursion_counter             = global.number[2]
+alias global_math_buffer            = global.number[3]
+alias harlan_version                = global.object[0]
+alias basis                         = global.object[1]
+alias sys_anchor                    = global.object[2]
+alias sys_killer                    = global.object[3]
+alias sys_interface                 = global.object[4]
+alias logic_controller              = global.object[5]
+alias selected_interface_team       = global.team[0]
+
+alias announced_game_start          = player.number[0]
+alias blinkshot                     = player.object[0]
+alias announce_start_timer          = player.timer[2]
+
+alias scale_result                  = object.number[0]
+alias invincibility_system          = object.number[0]
+alias map_area                      = object.number[0]
+alias delay                         = object.number[0]
+alias is_blocked                    = object.number[0]
+alias math_remainder                = object.number[1]
+alias is_prepared                   = object.number[1]
+alias send_feedback                 = object.number[1]
+alias is_banned                     = object.number[2]
+alias prev_spawn_sequece            = object.number[3]
+alias linked_teleport               = object.object[0]
+alias saved_teleport                = object.object[0]
+alias blinkshot                     = object.object[0]
+alias spawned_flag                  = object.object[0]
+alias killer                        = object.object[0]
+alias victim                        = object.object[1]
+alias grace_timer                   = object.timer[0]
+alias assigned_team                 = object.team[0]
+
+declare selected_invincibility_mode with network priority low
+declare current_calculated_scale    with network priority low
+declare recursion_counter           with network priority low
+declare global_math_buffer          with network priority low
+declare harlan_version              with network priority local
+declare basis                       with network priority local
+declare sys_anchor                  with network priority low
+declare sys_killer                  with network priority low
+declare sys_interface               with network priority low
+declare logic_controller            with network priority low
+declare selected_interface_team     with network priority low
+
+declare player.announced_game_start with network priority low
+declare player.announce_start_timer = 5
 
 on init: do
+    ----------------------------------------------------------------------------
+    -- HARLAN VERSION:
+    -- detect harlan_version object for compatibility checks.
+    ----------------------------------------------------------------------------
+    harlan_version = no_object
+    for each object with label "harlan_version" do
+        harlan_version = current_object
+    end
+
+    ----------------------------------------------------------------------------
+    -- INIT UPDATE SYSTEM:
+    -- Allows running code on a forge gametype.
+    ----------------------------------------------------------------------------
+    function reset_anchor_pos()
+        sys_anchor.victim.detach()
+
+        sys_anchor.attach_to(sys_anchor.victim, 0, 0, 0, absolute)
+        sys_anchor.detach()
+    end
+
+    function step_up_sequence()
+        sys_anchor.victim.attach_to(sys_anchor, 0, 0, 127, absolute)
+        reset_anchor_pos()
+
+        sys_anchor.victim.attach_to(sys_anchor, 0, 0, 127, absolute)
+        reset_anchor_pos()
+    end
+
     -- We search for or create the Anchor (Logic Controller)
     for each object do
-        inline: if basis == no_object then
+        if basis == no_object then
             basis = current_object
         end
     end
 
     for each player do
-        inline: if sys_anchor == no_object then
+        if sys_anchor == no_object then
             -- Now we create the real Anchor
             sys_anchor = basis.place_at_me(flag_stand, none, never_garbage_collect, 0, 0, 127, none)
     
@@ -1016,16 +161,19 @@ on init: do
 
             -- Initialization of logic controller.
             logic_controller = sys_anchor   
-            logic_controller.scale_system = scale_mode.lineal
         end
     end
 end
 
+-- We use the 'on object death: do' event as our update function.
 on object death: do
-    -- We checked if the one that died was our system monitor.
-    inline: if killed_object.is_of_type(monitor) and killed_object.has_forge_label("sys_victim") then
+    ----------------------------------------------------------------------------
+    -- UPDATE SYSTEM:
+    -- Allows running code on a forge gametype.
+    ----------------------------------------------------------------------------
+    if killed_object.is_of_type(monitor) and killed_object.has_forge_label("sys_victim") then
         -- If the anchor exists, we create a new victim.
-        inline: if sys_anchor != no_object then
+        if sys_anchor != no_object then
             if sys_anchor.killer != no_object then
                 sys_anchor.killer.delete()
             end
@@ -1041,56 +189,91 @@ on object death: do
         end
     end
 
-    interface()
-    scaling_system()
-    invincibility_system()
-    capture_the_flag()
-    custom_teleports()
-    push_teleports()
-    qol_teleports()
-    qol_falcon()
-    blinkshot()
+    ----------------------------------------------------------------------------
+    -- INITIAL ANNOUNCE:
+    -- Announce welcome messages.
+    ----------------------------------------------------------------------------
+    for each player do
+        current_player.announce_start_timer.set_rate(-100%)
+
+        if current_player.announced_game_start == 0 then
+            -- TODO: Doesn't show up for some reason.
+            ui_alert.set_text("IN MEMORY OF THE HARLAN")
+            ui_alert.set_visibility(current_player, true)
+
+            if current_player.announce_start_timer.is_zero() then
+                game.show_message_to(current_player, none, "Version 2.0.%n by Place & Art", VERSION)
+
+                if harlan_version != no_object then
+                    if harlan_version.spawn_sequence == 0 then
+                        game.show_message_to(current_player, none, "Harlan Forge")
+                    alt
+                        game.show_message_to(current_player, none, "WARNING: Map expects newer version of this gametype")
+                    end
+                end
+
+                current_player.announced_game_start = 1
+                ui_alert.set_visibility(current_player, false)
+            end
+
+        end
+    end
     
-    -- If the killer was a player.
-    inline: if killer_player != no_player then
-        alias c_vehicle = allocate global.object
-        c_vehicle = killer_player.get_vehicle()
-        
-        -- If the player didn't had a vehicle.
-        inline: if c_vehicle == no_object then
-            -- If a blink was killed.
-            inline: if killed_object.has_forge_label("blinkshot") then
-                killer_player.blinkshot = killed_object.place_at_me(hill_marker, none, none, 0, 0, 0, none)
-            
-            inline: altif killed_object.has_forge_label("comms") then
-                for each object with label "comms_spawn" do
-                    alias c_comms = current_object
+    ----------------------------------------------------------------------------
+    -- CUSTOM TELEPORTS:
+    -- Converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
+    ----------------------------------------------------------------------------
+    for each object with label "teleporter" do
+        alias c_teleport = current_object
 
-                    -- If this is a collector comms and its instance was killed.
-                    inline: if c_comms.team == team[0] and c_comms.instance == no_object then
-                        alias available = allocate global.number
-                        available = 0
+        -- If this object meets the requirements to be a custom teleport.
+        if  c_teleport.spawn_sequence > 0 
+        and c_teleport.is_of_type(hill_marker) 
+        or c_teleport.is_of_type(capture_plate)
+        then
+            c_teleport.set_waypoint_range(0, 10)
+            c_teleport.set_waypoint_visibility(everyone)
+            c_teleport.set_waypoint_priority(low)   
 
-                        alias linked_comms = allocate global.object
-                        linked_comms = c_comms.linked_comms
+            if c_teleport.is_of_type(hill_marker) then
+                c_teleport.set_shape_visibility(everyone)  
+                    
+            altif c_teleport.is_of_type(capture_plate) then
+                c_teleport.set_shape_visibility(no_one)
+            end
+        end
+    end
 
-                        inline: if linked_comms != no_object and linked_comms.team == team[1] then
-                            for each object with label 1 do
-                                alias c_falcon = current_object
-                                alias c_health = allocate global.number
-                                c_health = c_falcon.health
+    -- This code below links custom teleports that have the same spawn_sequence.
+    for each object with label "teleporter" do
+        alias c_teleport = allocate temporary object
+        c_teleport = current_object
 
-                                inline: if linked_comms.shape_contains(c_falcon) and c_health > 0 then
-                                    available += 1
+        if  c_teleport.spawn_sequence > 0 
+        and c_teleport.is_of_type(hill_marker) 
+        or c_teleport.is_of_type(capture_plate)
+        then
+            for each object with label "teleporter" do
+                alias temp_teleport = current_object  
+
+                if c_teleport.spawn_sequence > 0 
+                and temp_teleport.is_of_type(hill_marker) 
+                or temp_teleport.is_of_type(capture_plate)
+                then
+                    -- If these teleports are not the same one.
+                    if temp_teleport != c_teleport then
+                        if temp_teleport.spawn_sequence == c_teleport.spawn_sequence then
+                            -- Team-based linking only for new maps with harlan_version
+                            if harlan_version != no_object then
+                                if temp_teleport.team == c_teleport.team then
+                                    c_teleport.linked_teleport = temp_teleport
+                                    temp_teleport.linked_teleport = c_teleport
                                 end
+                            alt
+                                -- Legacy mode: link by spawn_sequence only
+                                c_teleport.linked_teleport = temp_teleport
+                                temp_teleport.linked_teleport = c_teleport
                             end
-                        end
-
-                        inline: if available >= 1 then
-                            game.show_message_to(killer_player, none, "Available falcons: %n", available)
-                            
-                        inline: altif available == 0 then
-                            game.show_message_to(killer_player, none, "There are no falcons")
                         end
                     end
                 end
@@ -1098,8 +281,621 @@ on object death: do
         end
     end
 
-    -- Here bc rvt is cranky asf
-    comms()
-end
+    -- This code below cleans those custom teleports that are linked when if they have different spawn_sequences
+    for each object with label "teleporter" do
+        alias c_teleport = current_object
 
--- Update system
+        if  c_teleport.spawn_sequence > 0 
+        and c_teleport.is_of_type(hill_marker) 
+        and c_teleport.linked_teleport != no_object
+        then
+            alias temp_teleport = allocate temporary object
+            temp_teleport = c_teleport.linked_teleport
+
+            if c_teleport.spawn_sequence != temp_teleport.spawn_sequence then
+                c_teleport.linked_teleport = no_object
+            end
+        end
+    end
+
+    -- This code below is the main logic of custom teleports.
+    for each object with label "teleporter" do
+        alias c_teleport = current_object
+
+        if c_teleport.spawn_sequence > 0
+        and c_teleport.is_of_type(hill_marker)
+        and c_teleport.linked_teleport != no_object
+        and c_teleport.linked_teleport.has_forge_label("teleporter")
+        and c_teleport.linked_teleport.is_of_type(hill_marker)
+        or c_teleport.linked_teleport.is_of_type(capture_plate)
+        then
+            for each player do
+                alias c_player = current_player
+                alias c_biped = allocate temporary object
+                c_biped = c_player.biped
+
+                -- If a player has entered this custom teleport.
+                if c_teleport.shape_contains(c_biped) and c_biped.saved_teleport == no_object then
+                    alias c_weapon = allocate temporary object
+                    c_weapon = c_player.get_weapon(primary)
+
+                    -- If this player has a flag.
+                    if c_weapon.is_of_type(flag) then
+                        -- If the custom teleport and the flag are from the same team.
+                        if c_teleport.team == c_weapon.team or c_teleport.team == neutral_team then
+                            c_biped.attach_to(c_teleport.linked_teleport, 0, 0, 0, relative)
+                            c_biped.saved_teleport = c_teleport.linked_teleport
+                        end
+                    
+                    -- If this player doesn't have a flag.
+                    altif not c_weapon.is_of_type(flag) then
+                        c_biped.attach_to(c_teleport.linked_teleport, 0, 0, 0, relative)
+                        c_biped.saved_teleport = c_teleport.linked_teleport
+                    end
+                end
+                            
+                --If this player has a saved teleport
+                if c_biped.saved_teleport != no_object then
+                    -- If this player is not inside the saved teleport's shape.
+                    if not c_biped.saved_teleport.shape_contains(c_biped) then
+                        c_biped.saved_teleport = no_object
+                        c_biped.delay = 0
+                    end
+        
+                    c_biped.delay += 1
+            
+                    if c_biped.delay == 50 then
+                        c_biped.detach()
+                        c_biped.delay = 0
+                    end
+                end
+            end
+        end
+    end
+
+    ----------------------------------------------------------------------------
+    -- QOL TELEPORTS:
+    -- teleporter waypoints with helpful text.
+    ----------------------------------------------------------------------------
+    for each object with label "teleporter" do
+        alias c_teleport = current_object
+        alias show_text = allocate temporary number
+        show_text = 1
+
+        if not c_teleport.is_of_type(capture_plate) then
+            -- Check if this is a bidirectional pair
+            if c_teleport.is_of_type(hill_marker) 
+            and c_teleport.linked_teleport != no_object 
+            and c_teleport.linked_teleport.is_of_type(hill_marker)
+            then
+                show_text = 0
+            end
+
+            if  c_teleport.spawn_sequence >= 0
+            and harlan_version != no_object
+            and harlan_version.spawn_sequence < 1 
+            and show_text == 1 
+            then
+                -- Shape
+                c_teleport.set_shape_visibility(everyone)
+        
+                -- Waypoint
+                c_teleport.set_waypoint_visibility(everyone)
+                c_teleport.set_waypoint_priority(low)
+                c_teleport.set_waypoint_range(0, 20)
+        
+                if c_teleport.spawn_sequence == map_areas.middle 
+                and c_teleport.map_area != map_areas.middle 
+                then
+                    c_teleport.set_waypoint_text("Middle")
+                    c_teleport.map_area = map_areas.middle
+
+                altif c_teleport.spawn_sequence == map_areas.valley 
+                and c_teleport.map_area != map_areas.valley 
+                then
+                    c_teleport.set_waypoint_text("Valley")
+                    c_teleport.map_area = map_areas.valley
+                    
+                altif c_teleport.spawn_sequence == map_areas.hangar 
+                and c_teleport.map_area != map_areas.hangar 
+                then
+                    c_teleport.set_waypoint_text("Hangar")
+                    c_teleport.map_area = map_areas.hangar
+
+                altif c_teleport.spawn_sequence == map_areas.sea_red 
+                and c_teleport.map_area != map_areas.sea_red 
+                then
+                    c_teleport.set_waypoint_text("Sea Red")
+                    c_teleport.map_area = map_areas.sea_red
+
+                altif c_teleport.spawn_sequence == map_areas.sea_blue 
+                and c_teleport.map_area != map_areas.sea_blue 
+                then
+                    c_teleport.set_waypoint_text("Sea Blue")
+                    c_teleport.map_area = map_areas.sea_blue
+
+                altif c_teleport.spawn_sequence == map_areas.red_base 
+                and c_teleport.map_area != map_areas.red_base 
+                then
+                    c_teleport.set_waypoint_text("Red Base")
+                    c_teleport.map_area = map_areas.red_base
+
+                altif c_teleport.spawn_sequence == map_areas.blue_base 
+                and c_teleport.map_area != map_areas.blue_base 
+                then
+                    c_teleport.set_waypoint_text("Blue Base")
+                    c_teleport.map_area = map_areas.blue_base
+
+                altif c_teleport.spawn_sequence == map_areas.centre_island 
+                and c_teleport.map_area != map_areas.centre_island 
+                then
+                    c_teleport.set_waypoint_text("Island")
+                    c_teleport.map_area = map_areas.centre_island
+                        
+                altif c_teleport.spawn_sequence == map_areas.up 
+                and c_teleport.map_area != map_areas.up 
+                then
+                    c_teleport.set_waypoint_text("Up")
+                    c_teleport.map_area = map_areas.up
+                
+                altif c_teleport.spawn_sequence == map_areas.down 
+                and c_teleport.map_area != map_areas.down 
+                then
+                    c_teleport.set_waypoint_text("Down")
+                    c_teleport.map_area = map_areas.down
+                
+                altif c_teleport.spawn_sequence == map_areas.bottom 
+                and c_teleport.map_area != map_areas.bottom 
+                then
+                    c_teleport.set_waypoint_text("Bottom")
+                    c_teleport.map_area = map_areas.bottom
+
+                altif c_teleport.spawn_sequence == map_areas.top 
+                and c_teleport.map_area != map_areas.top 
+                then
+                        c_teleport.set_waypoint_text("Top")
+
+                altif c_teleport.spawn_sequence == map_areas.road_red 
+                and c_teleport.map_area != map_areas.road_red 
+                then
+                    c_teleport.set_waypoint_text("Road Red")
+
+                altif c_teleport.spawn_sequence == map_areas.road_blue 
+                and c_teleport.map_area != map_areas.road_blue 
+                then
+                    c_teleport.set_waypoint_text("Road Blue")
+                end
+        
+                if c_teleport.spawn_sequence < map_areas.middle 
+                or c_teleport.spawn_sequence > map_areas.road_blue 
+                then
+                    c_teleport.set_waypoint_visibility(no_one)
+                    c_teleport.map_area = map_areas.nothing
+                end
+
+            alt 
+                c_teleport.set_waypoint_text("")
+            end
+        end
+    end
+
+    ----------------------------------------------------------------------------
+    -- PUSH TELEPORTS: 
+    -- Systems that prevents reciever teleports from being blocked by falcons.
+    ----------------------------------------------------------------------------
+    for each object with label "push_receiver" do
+        alias c_receiver = current_object
+
+        c_receiver.is_blocked = 0
+        c_receiver.set_shape(cylinder, 20, 15, 0)
+        c_receiver.set_waypoint_range(0, 20)
+        c_receiver.set_waypoint_text("Do not block!")
+
+        if c_receiver.send_feedback == 0 then
+            game.show_message_to(all_players, none, "Push teleport setted")
+            c_receiver.send_feedback = 1
+        end
+    end
+
+    for each object with label all_falcons do
+        alias c_falcon = allocate temporary object
+        c_falcon = current_object
+
+        if c_falcon.is_prepared == 0 then
+            c_falcon.is_prepared = 1
+
+            c_falcon.grace_timer.set_rate(0%)
+            c_falcon.grace_timer = 0
+            c_falcon.is_banned = 0
+        end
+
+        alias is_blocking = allocate temporary number
+        is_blocking = 0
+
+        for each object with label "push_receiver" do
+            alias c_receiver = current_object
+
+            if c_receiver.shape_contains(c_falcon) then
+                c_falcon.grace_timer.set_rate(100%)
+                c_receiver.is_blocked = 1
+                is_blocking = 1
+
+                if c_falcon.grace_timer >= 15 or c_falcon.is_banned == 1 then
+                    c_falcon.apply_upward_impulse()
+                    c_falcon.is_banned = 1
+                end
+            end
+        end
+
+        if is_blocking == 0 then
+            c_falcon.grace_timer.set_rate(0%)
+            c_falcon.grace_timer = 0
+        end
+    end
+
+    -- Visual feedback
+    for each object with label "push_receiver" do
+        alias c_receiver = current_object
+
+        if c_receiver.is_blocked == 1 then
+            c_receiver.set_shape_visibility(everyone)
+            c_receiver.set_waypoint_priority(blink)
+            c_receiver.set_waypoint_visibility(everyone)
+
+        altif c_receiver.is_blocked == 0 then
+            c_receiver.set_shape_visibility(no_one)
+            c_receiver.set_waypoint_priority(normal)
+            c_receiver.set_waypoint_visibility(no_one)
+        end
+    end
+
+    --------------------------------------------------------------------------------
+    -- QOL FALCON:
+    -- notify players when falcons have spawned.
+    --------------------------------------------------------------------------------
+    if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
+        for each object with label all_falcons do
+            alias c_falcon = current_object
+
+            -- To avoid show_message_to() spamming.
+            if not c_falcon.has_forge_label("scale") then
+                if c_falcon.spawn_sequence == map_areas.middle and c_falcon.map_area != map_areas.middle then
+                    game.show_message_to(all_players, none, "Middle falcon setted")
+                    c_falcon.map_area = map_areas.middle
+        
+                altif c_falcon.spawn_sequence == map_areas.valley and c_falcon.map_area != map_areas.valley then
+                    game.show_message_to(all_players, none, "Valley falcon setted")
+                    c_falcon.map_area = map_areas.valley
+        
+                altif c_falcon.spawn_sequence == map_areas.hangar and c_falcon.map_area != map_areas.hangar then
+                    game.show_message_to(all_players, none, "Hangar falcon setted")
+                    c_falcon.map_area = map_areas.hangar
+                
+                altif c_falcon.spawn_sequence == map_areas.sea_red and c_falcon.map_area != map_areas.sea_red then
+                    game.show_message_to(all_players, none, "Sea red falcon setted")
+                    c_falcon.map_area = map_areas.sea_red
+        
+                altif c_falcon.spawn_sequence == map_areas.sea_blue and c_falcon.map_area != map_areas.sea_blue then
+                    game.show_message_to(all_players, none, "Sea blue falcon setted")
+                    c_falcon.map_area = map_areas.sea_blue
+        
+                altif c_falcon.spawn_sequence == map_areas.red_base and c_falcon.map_area != map_areas.red_base then
+                    game.show_message_to(all_players, none, "Red base falcon setted")
+                    c_falcon.map_area = map_areas.red_base
+        
+                altif c_falcon.spawn_sequence == map_areas.blue_base and c_falcon.map_area != map_areas.blue_base then
+                    game.show_message_to(all_players, none, "Blue base falcon setted")
+                    c_falcon.map_area = map_areas.blue_base
+
+                altif c_falcon.spawn_sequence == map_areas.centre_island and c_falcon.map_area != map_areas.centre_island then
+                    game.show_message_to(all_players, none, "Island falcon setted")
+                    c_falcon.map_area = map_areas.centre_island
+                end
+
+                if c_falcon.spawn_sequence < map_areas.middle or c_falcon.spawn_sequence > map_areas.centre_island then
+                    if c_falcon.map_area != map_areas.nothing then
+                        game.show_message_to(all_players, none, "No area selected for this falcon")
+                    end
+
+                    c_falcon.map_area = map_areas.nothing
+                end
+            end
+        end
+    end
+
+    --------------------------------------------------------------------------------
+    -- BLINKSHOT:
+    -- Players who destroy monitors labeled as "blinkshot" are teleported to their position.
+    --------------------------------------------------------------------------------
+    for each object with label "blink_spawn" do
+        alias blink_spawn = current_object
+
+        -- Used 'spawn_sequence' to allow players to decide if the blinkshot is going to be spawned or not.
+        if  blink_spawn.spawn_sequence == 1 and 
+            blink_spawn.blinkshot == no_object
+        then
+            blink_spawn.blinkshot = blink_spawn.place_at_me(monitor, "blinkshot", none, 0, 0, 0, none)
+            blink_spawn.blinkshot.set_scale(150)
+            blink_spawn.blinkshot.set_waypoint_priority(low)
+            blink_spawn.blinkshot.set_waypoint_visibility(everyone)
+            blink_spawn.blinkshot.set_waypoint_range(0, 100)
+        end
+    end
+
+    for each object with label "blinkshot" do
+        alias blinkshot = current_object
+        blinkshot.shields = 0
+        blinkshot.health = 1
+    end
+
+    for each player do
+        alias c_player = current_player
+        alias killed_blink = allocate temporary object
+        killed_blink = c_player.blinkshot
+
+        if killed_blink != no_object and killed_blink.has_forge_label("blinkshot") then
+            alias c_weapon = allocate temporary object
+            c_weapon = c_player.get_weapon(primary)
+
+            if c_weapon.is_of_type(flag) then
+                killed_blink.delete()
+            end
+
+            c_player.biped.attach_to(killed_blink, 0, 0, 0, relative)
+            c_player.biped.shields = 0
+
+            killed_blink.delay += 1
+            if killed_blink.delay >= 40 then
+                c_player.biped.detach()
+                killed_blink.delete()
+            end
+        end
+    end
+
+    --------------------------------------------------------------------------------
+    -- CAPTURE THE FLAG:
+    -- System that spawns flag on flag stands positions based on its selected team.
+    --------------------------------------------------------------------------------
+    for each object with label "ctf_flag_return" do
+        alias c_flag_stand = current_object
+
+        -- If this object is a flag stand.
+        if c_flag_stand.is_of_type(flag_stand) then
+            if c_flag_stand.team != c_flag_stand.assigned_team then
+                c_flag_stand.spawned_flag.delete()
+            end
+
+            -- If this flag stand doesn't have a spawned flag.
+            if c_flag_stand.spawned_flag == no_object then
+                alias new_flag = allocate global.object
+
+                -- If this flag stand is from red team.
+                if c_flag_stand.team == team[0] then
+                   new_flag = c_flag_stand.place_at_me(flag, none, none, 0, 0, 0, none)
+                   new_flag.team = team[0]
+
+                -- If this flag stand is from blue team.
+                altif c_flag_stand.team == team[1] then
+                    new_flag = c_flag_stand.place_at_me(flag, none, none, 0, 0, 0, none)
+                    new_flag.team = team[1]
+
+                altif c_flag_stand.team == team[2] then
+                    new_flag = c_flag_stand.place_at_me(flag, none, none, 0, 0, 0, none)
+                    new_flag.team = team[2]
+
+                altif c_flag_stand.team == team[3] then
+                    new_flag = c_flag_stand.place_at_me(flag, none, none, 0, 0, 0, none)
+                    new_flag.team = team[3]
+
+                altif c_flag_stand.team == team[4] then
+                    new_flag = c_flag_stand.place_at_me(flag, none, none, 0, 0, 0, none)
+                    new_flag.team = team[4]
+
+                altif c_flag_stand.team == team[5] then
+                    new_flag = c_flag_stand.place_at_me(flag, none, none, 0, 0, 0, none)
+                    new_flag.team = team[5]
+
+                altif c_flag_stand.team == team[6] then
+                    new_flag = c_flag_stand.place_at_me(flag, none, none, 0, 0, 0, none)
+                    new_flag.team = team[6]
+
+                altif c_flag_stand.team == team[7] then
+                    new_flag = c_flag_stand.place_at_me(flag, none, none, 0, 0, 0, none)
+                    new_flag.team = team[7]
+
+                altif c_flag_stand.team == neutral_team then
+                    new_flag = c_flag_stand.place_at_me(flag, none, none, 0, 0, 0, none)
+                    new_flag.team = neutral_team
+                end
+
+                if new_flag != no_object then
+                    c_flag_stand.spawned_flag = new_flag
+                end
+
+                c_flag_stand.assigned_team = c_flag_stand.team
+            end
+        end
+    end
+
+    ----------------------------------------------------------------------------
+    -- SCALE SYSTEM:
+    -- Allows objects to be scaled in-game.
+    ----------------------------------------------------------------------------
+    if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
+        function math_precision_calculator()
+            alias subject = current_object
+
+            -- We increment the recursion counter to avoid infinite loops.
+            recursion_counter += 1
+
+            -- Start of the mathematical smoothing algorithm:
+            -- It takes the current size and saves it in the waste buffer.
+            subject.math_remainder = subject.scale_result
+
+            -- Divide the remainder by 33 (simulate 3%).
+            subject.math_remainder /= 33
+
+            -- It takes the current size, passes it to the global buffer and divides it by 228 (simulating 0.4%).
+            global_math_buffer = subject.scale_result
+            global_math_buffer /= 228
+
+            -- Add both fractional results to the total size.
+            -- This creates compound growth with each iteration.
+            subject.scale_result += subject.math_remainder
+            subject.scale_result += global_math_buffer
+
+            -- If the recursion counter has not yet reached the limit defined in current_calculated_scale...
+            if recursion_counter < current_calculated_scale then
+                -- ...it calls itself to continue calculating.
+                math_precision_calculator()
+            end
+        end
+
+        for each object with label "scale" do
+            alias subject = current_object
+
+            -- We initialize the current scale with the value of the Spawn Sequence.
+            current_calculated_scale = subject.spawn_sequence
+
+            -- Initial base of 100%
+            subject.scale_result = 100
+            current_calculated_scale = subject.spawn_sequence
+
+            -- If it is negative, we apply a multiplier of x5
+            if subject.spawn_sequence < 0 then
+                current_calculated_scale *= 5
+                subject.scale_result += current_calculated_scale
+
+                -- Special case: Spawn Sequence -20 strength scales to 1%
+                if subject.spawn_sequence == -20 then
+                    subject.scale_result = 1
+                end
+
+                -- Special calculation for values ​​less than -20
+                if subject.spawn_sequence < -20 then
+                    current_calculated_scale = 100
+                    current_calculated_scale += subject.spawn_sequence
+                    current_calculated_scale += 101
+                end
+            end
+
+            -- If it is outside the safe range (-20 to 0), we activate recursion.
+            if subject.spawn_sequence < -20 or subject.spawn_sequence > 0 then
+                subject.scale_result = 100
+                    
+                -- Reset global counter
+                recursion_counter = 0
+
+                math_precision_calculator()
+            end
+
+            -- We assign the final calculated result to the current value
+            current_calculated_scale = subject.scale_result
+
+            -- We save the final calculation in the object's memory for future reference.
+            subject.scale_result = current_calculated_scale
+
+            -- We performed the actual resizing in the game engine.
+            subject.set_scale(current_calculated_scale)
+
+            -- We copy rotation on itself to force the physics update.
+            subject.copy_rotation_from(subject, false)
+        end
+    end
+
+    ----------------------------------------------------------------------------
+    -- PLAYER INTERFACE:
+    -- Allows players to interact with internal harlan forge configuration.
+    ----------------------------------------------------------------------------
+    if sys_interface == no_object then
+        for each object with label "sys_config" do
+            alias interface = current_object
+
+            if interface.is_of_type(flag_stand)then
+                sys_interface = interface            
+            end
+        end
+    end 
+
+    if sys_interface != no_object 
+    and sys_interface.has_forge_label("sys_config") 
+    then
+        -- If the selected team is red and it wasn't red team before.
+        if sys_interface.team == team[0] then
+            if selected_interface_team != team[0] then
+                -- Save the selected team as red team.
+                selected_interface_team = team[0]
+                game.show_message_to(all_players, none, "Change invincibility mode active")
+            end
+
+            if sys_interface.spawn_sequence == invincibility_mode.active 
+            and selected_invincibility_mode != invincibility_mode.active
+            then
+                game.show_message_to(all_players, none, "Invincibility mode active")
+                logic_controller.invincibility_system = invincibility_mode.active
+                selected_invincibility_mode = invincibility_mode.active
+
+            altif sys_interface.spawn_sequence == invincibility_mode.inactive 
+            and selected_invincibility_mode != invincibility_mode.inactive
+            then
+                game.show_message_to(all_players, none, "Invincibility mode inactive")
+                logic_controller.invincibility_system = invincibility_mode.inactive
+                selected_invincibility_mode = invincibility_mode.inactive
+
+            -- If it's not any mode of invincibility, reset the selected invincibility mode.
+            altif sys_interface.spawn_sequence != invincibility_mode.active 
+            and sys_interface.spawn_sequence != invincibility_mode.inactive
+            then
+                selected_invincibility_mode = invincibility_mode.nothing
+            end
+
+        -- Reset the system selected
+        altif sys_interface.team != team[0] 
+        and selected_interface_team != no_team 
+        then
+            selected_interface_team = no_team
+            game.show_message_to(all_players, none, "No system selected")
+        end
+
+    -- if it's not any team, reset the selected team
+    altif sys_interface.team != team[0] 
+    and selected_interface_team != no_team 
+    then
+        selected_interface_team = no_team
+    end
+
+    ----------------------------------------------------------------------------
+    -- INVINCIVILITY SYSTEM:
+    --  Allows players to be invincible whenever they want.
+    ----------------------------------------------------------------------------
+    if logic_controller.invincibility_system != invincibility_mode.nothing then
+        for each player do
+            alias c_player = current_player
+
+            -- If the invincibility should be active.
+            if logic_controller.invincibility_system == invincibility_mode.active then
+                c_player.biped.set_invincibility(1)
+
+            altif logic_controller.invincibility_system == invincibility_mode.inactive then
+                c_player.biped.set_invincibility(0)
+            end
+        end
+    end
+    
+    -- If the killer was a player.
+    if killer_player != no_player then
+        alias c_vehicle = allocate temporary object
+        c_vehicle = killer_player.get_vehicle()
+        
+        -- If the player didn't had a vehicle.
+        if c_vehicle == no_object then
+            --------------------------------------------------------------------
+            -- DEATH BLINKSHOT:
+            -- Players who destroy monitors labeled as "blinkshot" are teleported to their position.
+            --------------------------------------------------------------------
+            if killed_object.has_forge_label("blinkshot") then
+                killer_player.blinkshot = killed_object.place_at_me(hill_marker, "blinkshot", none, 0, 0, 0, none)
+            end
+        end
+    end
+end
