@@ -101,15 +101,6 @@ declare player.announce_start_timer = 5
 
 on init: do
     ----------------------------------------------------------------------------
-    -- HARLAN VERSION:
-    -- detect harlan_version object for compatibility checks.
-    ----------------------------------------------------------------------------
-    harlan_version = no_object
-    for each object with label "harlan_version" do
-        harlan_version = current_object
-    end
-
-    ----------------------------------------------------------------------------
     -- INIT UPDATE SYSTEM:
     -- Allows running code on a forge gametype.
     ----------------------------------------------------------------------------
@@ -167,6 +158,15 @@ end
 
 -- We use the 'on object death: do' event as our update function.
 on object death: do
+    ----------------------------------------------------------------------------
+    -- HARLAN VERSION:
+    -- detect harlan_version object for compatibility checks.
+    ----------------------------------------------------------------------------
+    harlan_version = no_object
+    for each object with label "harlan_version" do
+        harlan_version = current_object
+    end
+    
     ----------------------------------------------------------------------------
     -- UPDATE SYSTEM:
     -- Allows running code on a forge gametype.
