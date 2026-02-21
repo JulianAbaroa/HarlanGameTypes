@@ -1,9 +1,10 @@
--- Harlan 2.0 Beta by Place & Art
+-- Harlan 2.0.2 Beta by Place & Art
 --------------------------------------------------------------------------------
 -- HARLAN VERSION: detect harlan_version object for compatibility checks.
 -- ODD ROUND: determine if round is odd-numbered so team names can be switched.
 -- INIT CUSTOM TELEPORTS: Converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
 -- QOL TELEPORTS: teleporter waypoints with helpful text.
+-- INIT FALCON DETECTION: Allows players to know if there's falcons on teleports before using them.
 -- INIT PUSH TELEPORTS: Systems that prevents reciever teleports from being blocked by falcons.
 -- SCALE SYSTEM: Allows objects to be scaled in-game.
 --------------------------------------------------------------------------------
@@ -33,13 +34,15 @@
 -- CUSTOM TELEPORTS: Converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
 -- BLINKSHOT: Players who destroy monitors labeled as "blinkshot" are teleported to their position.
 -- SPECIAL WEAPON TRAITS: apply limited traits to players holding certain weapons.
+-- FALCON DETECTION: Allows players to know if there's falcons on teleports before using them.
 -- PUSH TELEPORTS: Systems that prevents reciever teleports from being blocked by falcons.
 -- PREVENT FLAG GRIEFING: Resets flag if flag should be at home but is away.
 --------------------------------------------------------------------------------
 -- DEATH BLINKSHOT: Players who destroy monitors labeled as "blinkshot" are teleported to their position.
+-- DEATH FALCON: Allows players to know if there's falcons on teleports before using them.
 --------------------------------------------------------------------------------
 
-alias VERSION = 0
+alias VERSION = 1
 alias FLAG_ZONE_RADIUS = 20
 
 enum map_areas
@@ -728,6 +731,7 @@ for each team do
         
         flag_zone = current_flag.zone
         current_flag.set_waypoint_visibility(no_one)
+        current_flag.set_waypoint_timer(none) -- ensure carried flags have no waypoint timer
         flag_carrier.biped.set_waypoint_icon(flag)
         current_flag.state = flag_state.carried
         current_flag.reset_timer = opt_flag_reset_time
@@ -878,17 +882,20 @@ for each team do
 
             -- blink the flag's waypoint if it's being returned
             current_flag.set_waypoint_priority(blink)
+            current_flag.set_waypoint_timer(none) -- hide timer if being returned
         end
 
         -- otherwise do not blink the flag's waypoint
         if returning_count == 0 then
             current_flag.set_waypoint_priority(high)
+            current_flag.set_waypoint_timer(object.reset_timer) -- show timer if not being returned
         end
 
         -- blink the flag's waypoint when it's about to reset
         for each object with label all_flags do 
             if current_object.reset_timer < 6 then 
                 current_object.set_waypoint_priority(blink)
+                current_flag.set_waypoint_timer(object.reset_timer) -- show timer if reset_timer < 6
             end
         end
         --
@@ -1324,7 +1331,7 @@ if opt_betrayer_traits == 1 then
                 end
 
                 if c_betrayer.betrayals >= 4 then 
-                    c_betrayer.biped.set_waypoint_text("Betrayer")
+                    c_betrayer.biped.set_waypoint_icon(skull)
                     c_betrayer.biped.set_waypoint_visibility(everyone)
 
                     -- Warn all the players
@@ -1358,7 +1365,10 @@ for each player do
     end
 
     if c_player.rating > mvp.rating and c_player != mvp then
-        game.show_message_to(all_players, none, "%n is the current MVP!", c_player)
+        alias c_rating = allocate global.number
+        c_rating = c_player.rating
+
+        game.show_message_to(all_players, none, "%n is the current MVP! (%n)", c_player, c_rating)
         mvp = c_player
     end
 end
@@ -1488,6 +1498,77 @@ if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
 end
 
 --------------------------------------------------------------------------------
+-- FALCON DETECTION:
+-- Allows players to know if there's falcons on teleports before using them.
+--------------------------------------------------------------------------------
+if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
+    -- Spawn or respawn falcon home markers
+    for each object with label all_falcons do
+        alias c_falcon = allocate temporary object
+        c_falcon = current_object
+
+        alias c_health = allocate temporary number
+        c_health = c_falcon.health
+
+        if  c_falcon.spawn_sequence > 0
+            and c_falcon.zone == no_object
+            and c_health > 0
+        then
+            c_falcon.zone = c_falcon.place_at_me(hill_marker, none, never_garbage_collect | suppress_effect, 0, 0, 0, none)
+            c_falcon.zone.set_shape_visibility(no_one)
+        end
+    end
+
+    -- Count falcons at home per sender
+    for each object with label "teleporter" do
+        alias sender = allocate temporary object
+        sender = current_object
+
+        if  not sender.is_of_type(hill_marker)
+            and not sender.is_of_type(capture_plate)
+            and sender.spawn_sequence > 0
+        then
+            alias has_falcon_match = allocate temporary number
+            has_falcon_match = 0
+
+            sender.state = 0
+
+            for each object with label all_falcons do
+                alias c_falcon = allocate temporary object
+                c_falcon = current_object
+
+                alias c_health = allocate temporary number
+                c_health = c_falcon.health
+
+                alias c_dist = allocate temporary number
+                c_dist = c_falcon.get_distance_to(c_falcon.zone)
+
+                if c_falcon.spawn_sequence == sender.spawn_sequence then
+                    has_falcon_match = 1
+
+                    if c_health > 0 and c_dist < 50 then
+                        sender.state += 1
+                    end
+                end
+            end
+
+            if has_falcon_match == 1 then -- do not give waypoints to teleporters without corresponding falcons
+                if sender.state <= 0 then
+                    sender.set_waypoint_icon(dead_teammate_marker)
+                    sender.set_waypoint_priority(low)
+                altif sender.state >= 9 then
+                    sender.set_waypoint_icon(territory_a, 9)
+                    sender.set_waypoint_priority(normal)
+                alt
+                    sender.set_waypoint_icon(territory_a, sender.state)
+                    sender.set_waypoint_priority(normal)
+                end
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
 -- PUSH TELEPORTS:
 -- Systems that prevents reciever teleports from being blocked by falcons.
 --------------------------------------------------------------------------------
@@ -1575,6 +1656,17 @@ on object death: do
             if killed_object.has_forge_label("blinkshot") then
                 killer_player.blinkshot = killed_object.place_at_me(hill_marker, "blinkshot", none, 0, 0, 0, none)
             end
+        end
+    end
+
+    ----------------------------------------------------------------------------
+    -- DEATH FALCON:
+    -- Allows players to know if there's falcons on teleports before using them.
+    ----------------------------------------------------------------------------
+    if killed_object.has_forge_label(all_falcons) then
+        if killed_object.zone != no_object then
+            killed_object.zone.delete() -- clean up old hill markers
+            killed_object.zone = no_object
         end
     end
 end
