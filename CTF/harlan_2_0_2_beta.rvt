@@ -1365,7 +1365,10 @@ for each player do
     end
 
     if c_player.rating > mvp.rating and c_player != mvp then
-        game.show_message_to(all_players, none, "%n is the current MVP!", c_player)
+        alias c_rating = allocate global.number
+        c_rating = c_player.rating
+
+        game.show_message_to(all_players, none, "%n is the current MVP! (%n)", c_player, c_rating)
         mvp = c_player
     end
 end
