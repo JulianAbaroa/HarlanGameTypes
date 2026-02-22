@@ -863,6 +863,10 @@ for each team do
 
         current_flag = current_team.flag -- restore current_flag
 
+        if current_flag.reset_timer < opt_flag_reset_time then -- only shows at i.e. 59 instead of 60
+            current_flag.set_waypoint_timer(object.reset_timer)
+        end
+
         if returning_count > 0 then
             flag_zone.return_timer.set_rate(-100%)
 
@@ -880,20 +884,17 @@ for each team do
 
             -- blink the flag's waypoint if it's being returned
             current_flag.set_waypoint_priority(blink)
-            current_flag.set_waypoint_timer(none) -- hide timer if being returned
         end
 
         -- otherwise do not blink the flag's waypoint
         if returning_count == 0 then
             current_flag.set_waypoint_priority(high)
-            current_flag.set_waypoint_timer(object.reset_timer) -- show timer if not being returned
         end
 
         -- blink the flag's waypoint when it's about to reset
         for each object with label all_flags do 
             if current_object.reset_timer < 6 then 
                 current_object.set_waypoint_priority(blink)
-                current_flag.set_waypoint_timer(object.reset_timer) -- show timer if reset_timer < 6
             end
         end
         --
