@@ -38,7 +38,6 @@
 -- PREVENT FLAG GRIEFING: Resets flag if flag should be at home but is away.
 --------------------------------------------------------------------------------
 -- DEATH BLINKSHOT: Players who destroy monitors labeled as "blinkshot" are teleported to their position.
--- DEATH FALCON: Allows players to know if there's falcons on teleports before using them.
 --------------------------------------------------------------------------------
 
 alias VERSION = 1
@@ -169,7 +168,7 @@ declare object.announced_flag_drop with network priority local
 declare object.zone with network priority low
 declare object.last_carrier with network priority low
 declare object.reset_timer  = opt_flag_reset_time
-declare object.return_timer = opt_flag_return_time
+declare object.return_timer = opt_flag_reset_time -- previously opt_flag_return_time
 declare object.notification_throttle = 3
 
 declare team.flag_point with network priority low
@@ -733,7 +732,7 @@ for each team do
         flag_carrier.biped.set_waypoint_icon(flag)
         current_flag.state = flag_state.carried
         current_flag.reset_timer = opt_flag_reset_time
-        flag_zone.return_timer = opt_flag_return_time
+        flag_zone.return_timer = opt_flag_reset_time -- previously opt_flag_return_time
         flag_zone.set_progress_bar(object.return_timer, no_one)
         sudden_death_enabled = 1
         flag_carrier.carrier_cooldown_timer = opt_carrier_cooldown
@@ -808,9 +807,9 @@ for each team do
         flag_zone = current_flag.zone 
         current_flag.state = flag_state.dropped
 
-        if opt_flag_return_time != 1 then 
+        -- if opt_flag_return_time != 1 then 
             flag_zone.set_progress_bar(object.return_timer, allies)
-        end
+        -- end
 
         current_flag.set_waypoint_icon(flag)
         current_flag.set_waypoint_visibility(everyone)
@@ -834,8 +833,7 @@ for each team do
         and current_flag.state == flag_state.dropped 
         or current_flag.state == 3 
     then 
-        current_flag.reset_timer.set_rate(-100%)
-        flag_zone.return_timer.set_rate(100%)
+        flag_zone.return_timer.set_rate(-100%)
         --
         -- Identify players returning the flag:
         --
@@ -863,12 +861,8 @@ for each team do
 
         current_flag = current_team.flag -- restore current_flag
 
-        if current_flag.reset_timer < opt_flag_reset_time then -- only shows at i.e. 59 instead of 60
-            current_flag.set_waypoint_timer(object.reset_timer)
-        end
-
         if returning_count > 0 then
-            flag_zone.return_timer.set_rate(-100%)
+            flag_zone.return_timer.set_rate(-125%)
 
             if returning_count > 1 then
                 flag_zone.return_timer.set_rate(-150%)
@@ -876,10 +870,6 @@ for each team do
                 if returning_count > 2 then
                     flag_zone.return_timer.set_rate(-200%)
                 end
-            end
-
-            if opt_flag_return_time == 1 then
-                flag_zone.return_timer.set_rate(-1000%)
             end
 
             -- blink the flag's waypoint if it's being returned
@@ -891,31 +881,40 @@ for each team do
             current_flag.set_waypoint_priority(high)
         end
 
-        -- blink the flag's waypoint when it's about to reset
-        for each object with label all_flags do 
-            if current_object.reset_timer < 6 then 
-                current_object.set_waypoint_priority(blink)
-            end
+        -- sync flag timer to zone timer for waypoint display
+        current_flag.reset_timer = flag_zone.return_timer
+
+        -- only show waypoint timer after 1 second has passed
+        if current_flag.reset_timer < opt_flag_reset_time then
+            current_flag.set_waypoint_timer(object.reset_timer)
+        alt
+            current_flag.set_waypoint_timer(none)
         end
         --
         -- Carry out resets and returns as appropriate:
         --
-        if  current_flag.is_out_of_bounds() 
-            or current_flag.reset_timer.is_zero() 
-        then -- carry out the reset
+        if current_flag.is_out_of_bounds() then 
             current_flag.delete()
 
-            if opt_sides == sides.neutral then 
+            if opt_sides == sides.neutral then
                 send_incident(flag_reset_neutral, current_flag.last_carrier, current_team)
             alt
                 send_incident(flag_reset, current_team, current_team)
             end
         end
 
-        -- carry out the return
-        if flag_zone.return_timer.is_zero() then 
+        if flag_zone.return_timer.is_zero() then
             current_flag.delete()
-            send_incident(flag_recovered, current_team, current_team)
+
+            if opt_sides == sides.neutral then
+                send_incident(flag_reset_neutral, current_flag.last_carrier, current_team)
+            alt
+                if returning_count > 0 then
+                    send_incident(flag_recovered, current_team, current_team) -- carry out the return
+                alt
+                    send_incident(flag_reset, current_team, current_team) -- carry out the reset
+                end
+            end
 
             -- credit players for returning flags
             for each player do 
@@ -1070,9 +1069,11 @@ end
 --------------------------------------------------------------------------------
 for each object with label all_flags do 
     alias current_flag = global.object[0]
+    alias flag_zone    = global.object[1]
     
-    if opt_sides == sides.one then 
+    -- if opt_sides == sides.one then
         current_flag = current_object
+        flag_zone = current_flag.zone
 
         for each player do
             if  current_player.team != current_flag.team
@@ -1080,9 +1081,10 @@ for each object with label all_flags do
             then 
                 any_flag_is_being_preserved = 1
                 current_flag.reset_timer.set_rate(0%)
+                flag_zone.return_timer.set_rate(0%)
             end
         end
-    end
+    -- end
 end
 
 --------------------------------------------------------------------------------
@@ -1501,27 +1503,15 @@ end
 -- Allows players to know if there's falcons on teleports before using them.
 --------------------------------------------------------------------------------
 if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
-    -- Spawn or respawn falcon home markers
-    for each object with label all_falcons do
-        alias c_falcon = current_object
+    for each player do
+        alias c_vehicle = allocate temporary object
+        c_vehicle = current_player.get_vehicle()
 
-        alias c_health = allocate temporary number
-        c_health = c_falcon.health
-
-        if  c_falcon.spawn_sequence > 0
-            and c_falcon.zone == no_object
-            and c_health > 0
-        then
-            c_falcon.zone = c_falcon.place_at_me(hill_marker, "falcon_home", never_garbage_collect | suppress_effect, 0, 0, 0, none)
-
-            alias c_home = allocate temporary object
-            c_home = c_falcon.zone
-            c_home.set_shape_visibility(no_one)
-            c_home.zone = c_falcon
+        if c_vehicle != no_object and c_vehicle.state == 1 then
+            c_vehicle.state = 2
         end
     end
 
-    -- Count falcons at home per sender
     for each object with label "teleporter" do
         alias c_teleport = allocate temporary object
         c_teleport = current_object
@@ -1536,33 +1526,23 @@ if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
             alias falcon_count = allocate temporary number
             falcon_count = 0
 
-            for each object with label "falcon_home" do
-                alias c_home = allocate temporary object
-                c_home = current_object
-
+            for each object with label all_falcons do
                 alias c_falcon = allocate temporary object
-                c_falcon = c_home.zone
+                c_falcon = current_object
 
-                if c_falcon != no_object then
-                    if c_falcon.spawn_sequence == c_teleport.spawn_sequence then
-                        has_falcon_match = 1
+                if c_falcon.spawn_sequence == c_teleport.spawn_sequence then
+                    has_falcon_match = 1
 
-                        alias c_health = allocate temporary number
-                        c_health = c_falcon.health
+                    alias c_health = allocate temporary number
+                    c_health = c_falcon.health
 
-                        alias c_dist = allocate temporary number
-                        c_dist = c_falcon.get_distance_to(c_home)
-
-                        if c_health > 0 and c_dist < 50 then
-                            falcon_count += 1
-                        end
+                    if c_health > 0 and c_falcon.state == 1 then
+                        falcon_count += 1
                     end
-                alt
-                    c_home.delete() -- Clean up home markers whose falcon has died
                 end
             end
 
-            if has_falcon_match == 1 then  -- do not give waypoints to teleporters without corresponding falcons
+            if has_falcon_match == 1 then -- do not give waypoints to teleporters without corresponding falcons
                 if falcon_count <= 0 then
                     c_teleport.set_waypoint_icon(dead_teammate_marker)
                     c_teleport.set_waypoint_priority(low)
