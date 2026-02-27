@@ -86,6 +86,7 @@ alias betrayer_traits = script_traits[2]
 alias special_traits  = script_traits[3]
 
 alias ui_alert = script_widget[0]
+alias ui_memorial = script_widget[1]
 
 alias captures   = player.script_stat[0]
 alias carry_time = player.script_stat[1]
@@ -528,13 +529,21 @@ end
 -- set up UI and announce game start.
 --------------------------------------------------------------------------------
 for each player do
+    ui_alert.set_text("Your flag must be at home to score!")
+    ui_alert.set_visibility(current_player, false)
+
     if current_player.announced_game_start == 0 then
-        ui_alert.set_text("IN MEMORY OF THE HARLAN")
-        ui_alert.set_visibility(current_player, true)
+        ui_memorial.set_text("IN MEMORY OF THE HARLAN")
+        ui_memorial.set_visibility(current_player, true)
 
-        if current_player.announce_start_timer.is_zero() then
+        if current_player.announce_start_timer == 1 then
             game.show_message_to(current_player, none, "Version 2.0.%n Beta by Place & Art", VERSION)
+            current_player.announced_game_start = 1
+        end
+    end
 
+    if current_player.announced_game_start == 1 then
+        if current_player.announce_start_timer.is_zero() then
             if harlan_version != no_object then
                 if harlan_version.spawn_sequence == 0 then
                     game.show_message_to(current_player, none, "Harlan Desert Bus")
@@ -544,7 +553,7 @@ for each player do
             end
 
             send_incident(ctf_game_start, current_player, no_player)
-            current_player.announced_game_start = 1
+            current_player.announced_game_start = 2
 
             if opt_sides == sides.one and current_player.team == team[1] then 
                 send_incident(team_offense, current_player, no_player)
@@ -556,13 +565,8 @@ for each player do
         end
     end
 
-    if current_player.announced_game_start == 1 and current_player.biped != no_object then
-        current_player.announced_game_start = 2
-    end
-
-    if current_player.announced_game_start == 2 then
-        ui_alert.set_text("Your flag must be at home to score!")
-        ui_alert.set_visibility(current_player, false)
+    if current_player.announced_game_start == 2 and current_player.biped != no_object then
+        ui_memorial.set_visibility(current_player, false)
     end
 end
 
