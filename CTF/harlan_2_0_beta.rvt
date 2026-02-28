@@ -26,7 +26,6 @@
 -- CLEANUP EMPTY TEAM FLAGS: delete a team's flag if all of their players quit and their flag is at home.
 -- MANAGE ROUND TERMINATION: manage round timer and sudden death.
 --------------------------------------------------------------------------------
--- CARRIER MELEE HEAL: optional melee health & shields restore for flag carrier kills.
 -- QOL FALCON: notify players when falcons have spawned.
 -- BETRAYERS: system that penalizes players who have committed more than a certain number of betrayals.
 -- MVP: system that shows in the event-feed who the highest rated player is.
@@ -73,8 +72,7 @@ alias opt_flag_reset_time  = script_option[2]
 alias opt_sides            = script_option[3] -- see (sides) enum
 alias opt_flag_at_home     = script_option[4]
 alias opt_carrier_cooldown = script_option[5]
-alias opt_melee_heal       = script_option[6]
-alias opt_betrayer_traits  = script_option[7]
+alias opt_betrayer_traits  = script_option[6]
 
 -- Unnamed Forge labels:
 alias all_flags = 0
@@ -1214,38 +1212,6 @@ if game.round_time_limit > 0 then
 
         if game.sudden_death_timer.is_zero() then 
             game.end_round()
-        end
-    end
-end
-
---------------------------------------------------------------------------------
--- CARRIER MELEE HEAL:
--- optional melee health & shields restore for flag carrier kills.
---------------------------------------------------------------------------------
-if opt_melee_heal == 1 then
-    for each player do
-        alias killer = global.player[0]
-        alias weapon = global.object[0]
-
-        if current_player.killer_type_is(kill) then
-            killer = no_player
-            killer = current_player.try_get_killer()
-
-            if killer != no_player then
-                weapon = no_object
-                weapon = killer.get_weapon(primary)
-
-                if weapon != no_object and weapon.is_of_type(flag) then
-                    alias c_shields = allocate temporary number
-                    c_shields = killer.biped.shields
-
-                    if c_shields < 100 then
-                        killer.biped.shields = 100
-                    end
-                    
-                    killer.biped.health = 100
-                end
-            end
         end
     end
 end
