@@ -67,8 +67,8 @@ enum sides
 end
 
 alias opt_lead_to_win      = script_option[0]
-alias opt_flag_return_time = script_option[1]
-alias opt_flag_reset_time  = script_option[2]
+alias opt_recovery_time    = script_option[1]
+alias opt_auto_recover     = script_option[2]
 alias opt_sides            = script_option[3] -- see (sides) enum
 alias opt_flag_at_home     = script_option[4]
 alias opt_carrier_cooldown = script_option[5]
@@ -128,7 +128,7 @@ alias linked_teleport       = object.object[0]
 alias saved_teleport        = object.object[0]
 alias blinkshot             = object.object[0]
 alias last_carrier          = object.player[0]
-alias reset_timer           = object.timer[0]
+alias recovery_timer        = object.timer[0]
 alias grace_timer           = object.timer[0]
 alias return_timer          = object.timer[1]
 alias notification_throttle = object.timer[2]
@@ -166,8 +166,8 @@ declare object.announced_flag_take with network priority local
 declare object.announced_flag_drop with network priority local
 declare object.zone with network priority low
 declare object.last_carrier with network priority low
-declare object.reset_timer  = opt_flag_reset_time
-declare object.return_timer = opt_flag_reset_time -- previously opt_flag_return_time
+declare object.recovery_timer = opt_recovery_time
+declare object.return_timer = 0 -- unused
 declare object.notification_throttle = 3
 
 declare team.flag_point with network priority low
@@ -733,9 +733,9 @@ for each team do
         current_flag.set_waypoint_timer(none) -- ensure carried flags have no waypoint timer
         flag_carrier.biped.set_waypoint_icon(flag)
         current_flag.state = flag_state.carried
-        current_flag.reset_timer = opt_flag_reset_time
-        flag_zone.return_timer = opt_flag_reset_time -- previously opt_flag_return_time
-        flag_zone.set_progress_bar(object.return_timer, no_one)
+        current_flag.recovery_timer = opt_recovery_time
+        flag_zone.recovery_timer = opt_recovery_time
+        flag_zone.set_progress_bar(object.recovery_timer, no_one)
         sudden_death_enabled = 1
         flag_carrier.carrier_cooldown_timer = opt_carrier_cooldown
         carrier_team = flag_carrier.team
@@ -808,11 +808,7 @@ for each team do
 
         flag_zone = current_flag.zone 
         current_flag.state = flag_state.dropped
-
-        -- if opt_flag_return_time != 1 then 
-            flag_zone.set_progress_bar(object.return_timer, allies)
-        -- end
-
+        flag_zone.set_progress_bar(object.recovery_timer, allies)
         current_flag.set_waypoint_icon(flag)
         current_flag.set_waypoint_visibility(everyone)
         current_team.flag.set_waypoint_priority(high)
@@ -835,7 +831,11 @@ for each team do
         and current_flag.state == flag_state.dropped 
         or current_flag.state == 3 
     then 
-        flag_zone.return_timer.set_rate(-100%)
+        if opt_auto_recover != 0 then
+            flag_zone.recovery_timer.set_rate(-100%)
+        alt
+            flag_zone.recovery_timer.set_rate(0%)
+        end
         --
         -- Identify players returning the flag:
         --
@@ -864,13 +864,15 @@ for each team do
         current_flag = current_team.flag -- restore current_flag
 
         if returning_count > 0 then
-            flag_zone.return_timer.set_rate(-125%)
-
+            if opt_auto_recover != 0 then
+                flag_zone.recovery_timer.set_rate(-125%)
+            alt
+                flag_zone.recovery_timer.set_rate(-100%)
+            end
             if returning_count > 1 then
-                flag_zone.return_timer.set_rate(-150%)
-
+                flag_zone.recovery_timer.set_rate(-150%)
                 if returning_count > 2 then
-                    flag_zone.return_timer.set_rate(-200%)
+                    flag_zone.recovery_timer.set_rate(-200%)
                 end
             end
 
@@ -884,11 +886,11 @@ for each team do
         end
 
         -- sync flag timer to zone timer for waypoint display
-        current_flag.reset_timer = flag_zone.return_timer
+        current_flag.recovery_timer = flag_zone.recovery_timer
 
         -- only show waypoint timer after 1 second has passed
-        if current_flag.reset_timer < opt_flag_reset_time then
-            current_flag.set_waypoint_timer(object.reset_timer)
+        if current_flag.recovery_timer < opt_recovery_time then
+            current_flag.set_waypoint_timer(object.recovery_timer)
         alt
             current_flag.set_waypoint_timer(none)
         end
@@ -905,7 +907,7 @@ for each team do
             end
         end
 
-        if flag_zone.return_timer.is_zero() then
+        if flag_zone.recovery_timer.is_zero() then
             current_flag.delete()
 
             if opt_sides == sides.neutral then
@@ -1082,8 +1084,8 @@ for each object with label all_flags do
                 and current_flag.zone.shape_contains(current_player.biped) 
             then 
                 any_flag_is_being_preserved = 1
-                current_flag.reset_timer.set_rate(0%)
-                flag_zone.return_timer.set_rate(0%)
+                current_flag.recovery_timer.set_rate(0%)
+                flag_zone.recovery_timer.set_rate(0%)
             end
         end
     -- end
@@ -1271,7 +1273,7 @@ if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
             end
 
             if c_falcon.spawn_sequence == map_areas.centre_island then
-                game.show_message_to(all_players, none, "Falcon spawned in Island")
+                game.show_message_to(all_players, none, "Falcon spawned on Island")
             end
         end
     end
@@ -1298,15 +1300,12 @@ if opt_betrayer_traits == 1 then
 
                 -- If the betrayer betrayals is less than 4
                 if c_betrayer.betrayals < 4 then 
-                    game.show_message_to(all_players, none, "Teamkilling is not allowed, %n!", c_betrayer)
+                    game.show_message_to(all_players, none, "Betrayal will be punished, %n!", c_betrayer)
                 end
 
                 if c_betrayer.betrayals >= 4 then 
-                    c_betrayer.biped.set_waypoint_icon(skull)
-                    c_betrayer.biped.set_waypoint_visibility(everyone)
-
                     -- Warn all the players
-                    game.show_message_to(all_players, none, "%n has been penalized for teamkilling", c_betrayer)
+                    game.show_message_to(all_players, none, "%n has been punished for betrayal!", c_betrayer)
                 end
             end
         end
@@ -1320,6 +1319,9 @@ if opt_betrayer_traits == 1 then
             
             c_player.frag_grenades = 0
             c_player.plasma_grenades = 0
+
+            c_player.biped.set_waypoint_icon(skull)
+            c_player.biped.set_waypoint_visibility(everyone)
         end
     end
 end
