@@ -1400,12 +1400,6 @@ for each object with label "teleporter" do
 
                     if c_weapon.is_of_type(flag) then
                         c_weapon.delete()
-
-                        if opt_sides == sides.neutral then
-                            send_incident(flag_reset_neutral, c_weapon.last_carrier, current_team)
-                        alt
-                            send_incident(flag_reset, current_team, current_team)
-                        end
                     end
                 end
             end
