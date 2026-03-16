@@ -1363,12 +1363,11 @@ for each object with label "teleporter" do
                 alias c_player = current_player
                 alias c_biped = allocate global.object
                 c_biped = c_player.biped
+                alias c_weapon = allocate global.object
+                c_weapon = c_player.get_weapon(primary)
 
                 -- If a player has entered this custom teleport.
                 if c_teleport.shape_contains(c_biped) and c_biped.saved_teleport == no_object then
-                    alias c_weapon = allocate global.object
-                    c_weapon = c_player.get_weapon(primary)
-
                     -- If this player has a flag.
                     if c_weapon.is_of_type(flag) then
                         -- If the custom teleport and the flag are from the same team.
@@ -1397,6 +1396,16 @@ for each object with label "teleporter" do
                     if c_biped.delay == 50 then
                         c_biped.detach()
                         c_biped.delay = 0
+                    end
+
+                    if c_weapon.is_of_type(flag) then
+                        c_weapon.delete()
+
+                        if opt_sides == sides.neutral then
+                            send_incident(flag_reset_neutral, c_weapon.last_carrier, current_team)
+                        alt
+                            send_incident(flag_reset, current_team, current_team)
+                        end
                     end
                 end
             end
