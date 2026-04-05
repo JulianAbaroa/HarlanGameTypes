@@ -506,7 +506,7 @@ for each player do
     end
 
     if game.score_to_win != 0 and opt_sides == sides.neutral or opt_sides == sides.multi then
-        if opt_lead_to_win >= game.score_to_win then
+        if opt_lead_to_win >= game.score_to_win or opt_lead_to_win == 0 then
             current_player.set_objective_text("Capture the flag.\r\n%n points to win.", game.score_to_win)
         alt -- Lead to win
             current_player.set_objective_text("Capture the flag.\r\n%n point lead or %n points to win.", opt_lead_to_win, game.score_to_win)
@@ -1537,6 +1537,10 @@ end
 -- PUSH TELEPORTS:
 -- Systems that prevents reciever teleports from being blocked by falcons.
 --------------------------------------------------------------------------------
+for each object with label "push_receiver" do
+    current_object.is_blocked = 0
+end
+
 for each object with label all_falcons do
     alias c_falcon = allocate global.object
     c_falcon = current_object
