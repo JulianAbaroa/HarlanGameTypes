@@ -1399,7 +1399,8 @@ for each object with label "teleporter" do
                     end
 
                     if c_weapon.is_of_type(flag) then
-                        c_weapon.delete()
+                        c_weapon.attach_to(c_teleport, 0, 0, 0, relative)
+                        c_weapon.detach()
                     end
                 end
             end
