@@ -1351,39 +1351,45 @@ end
 -- Converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
 --------------------------------------------------------------------------------
 for each object with label "teleporter" do
-    alias c_teleport = current_object
+    alias c_teleport = allocate temporary object
+    c_teleport = current_object
 
     -- If this teleport has a linked teleport.
-    if  c_teleport.linked_teleport != no_object 
-        and c_teleport.linked_teleport.has_forge_label("teleporter") 
+    if  c_teleport.linked_teleport != no_object
+        and c_teleport.linked_teleport.has_forge_label("teleporter")
     then
         -- Main logic
         if c_teleport.is_of_type(hill_marker) then
+
+            -- Check if a mismatched flag is blocking this teleport.
+            alias flag_is_blocking = allocate temporary number
+            flag_is_blocking = 0
+
+            if c_teleport.team != neutral_team then
+                for each object with label all_flags do
+                    if  c_teleport.shape_contains(current_object)
+                        and current_object.team != c_teleport.team
+                    then
+                        flag_is_blocking = 1
+                    end
+                end
+            end
+
             for each player do
                 alias c_player = current_player
-                alias c_biped = allocate global.object
+                alias c_biped = allocate temporary object
                 c_biped = c_player.biped
-                alias c_weapon = allocate global.object
-                c_weapon = c_player.get_weapon(primary)
 
-                -- If a player has entered this custom teleport.
-                if c_teleport.shape_contains(c_biped) and c_biped.saved_teleport == no_object then
-                    -- If this player has a flag.
-                    if c_weapon.is_of_type(flag) then
-                        -- If the custom teleport and the flag are from the same team.
-                        if c_teleport.team == c_weapon.team or c_teleport.team == neutral_team then
-                            c_biped.attach_to(c_teleport.linked_teleport, 0, 0, 0, relative)
-                            c_biped.saved_teleport = c_teleport.linked_teleport
-                        end
+                -- If a player has entered this custom teleport and it is not blocked.
+                if  c_teleport.shape_contains(c_biped)
+                    and c_biped.saved_teleport == no_object
+                    and flag_is_blocking == 0
+                then
+                    c_biped.attach_to(c_teleport.linked_teleport, 0, 0, 0, relative)
+                    c_biped.saved_teleport = c_teleport.linked_teleport
+                end
 
-                    -- If this player doesn't have a flag.
-                    altif not c_weapon.is_of_type(flag) then
-                        c_biped.attach_to(c_teleport.linked_teleport, 0, 0, 0, relative)
-                        c_biped.saved_teleport = c_teleport.linked_teleport
-                    end
-                end 
-
-                --If this player has a saved teleport
+                -- If this player has a saved teleport.
                 if  c_biped.saved_teleport != no_object
                     and c_biped.saved_teleport == c_teleport.linked_teleport
                 then
@@ -1400,6 +1406,9 @@ for each object with label "teleporter" do
                         end
 
                         -- If the player picked up a mismatched flag mid-transit, send it back.
+                        alias c_weapon = allocate temporary object
+                        c_weapon = c_player.get_weapon(primary)
+
                         if  c_weapon.is_of_type(flag)
                             and c_teleport.team != c_weapon.team
                             and c_teleport.team != neutral_team
