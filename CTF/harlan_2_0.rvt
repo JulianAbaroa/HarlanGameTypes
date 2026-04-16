@@ -1384,23 +1384,29 @@ for each object with label "teleporter" do
                 end 
 
                 --If this player has a saved teleport
-                if c_biped.saved_teleport != no_object then
+                if  c_biped.saved_teleport != no_object
+                    and c_biped.saved_teleport == c_teleport.linked_teleport
+                then
                     -- If this player is not inside the saved teleport's shape.
                     if not c_biped.saved_teleport.shape_contains(c_biped) then
                         c_biped.saved_teleport = no_object
                         c_biped.delay = 0
-                    end
+                    alt
+                        c_biped.delay += 1
 
-                    c_biped.delay += 1
+                        if c_biped.delay == 5 then
+                            c_biped.detach()
+                            c_biped.delay = 0
+                        end
 
-                    if c_biped.delay == 50 then
-                        c_biped.detach()
-                        c_biped.delay = 0
-                    end
-
-                    if c_weapon.is_of_type(flag) then
-                        c_weapon.attach_to(c_teleport, 0, 0, 0, relative)
-                        c_weapon.detach()
+                        -- If the player picked up a mismatched flag mid-transit, send it back.
+                        if  c_weapon.is_of_type(flag)
+                            and c_teleport.team != c_weapon.team
+                            and c_teleport.team != neutral_team
+                        then
+                            c_weapon.attach_to(c_teleport, 0, 0, 0, relative)
+                            c_weapon.detach()
+                        end
                     end
                 end
             end
