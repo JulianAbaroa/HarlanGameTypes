@@ -1,78 +1,137 @@
-alias Processed    = allocate object.number
-alias Attachment   = allocate object.object
-alias RandomAttach = allocate global.number
+alias Processed      = allocate object.number
+alias Attachment     = allocate object.object
+alias RandomAttach   = allocate global.number
+alias TargetVehicle  = allocate global.object
+alias AttachmentRoot = allocate global.object
+
+function attach_root_to_vehicle_point()
+    if TargetVehicle.is_of_type(banshee) then
+        AttachmentRoot.attach_to(TargetVehicle, 7, 0, 4, relative)
+    altif TargetVehicle.is_of_type(ghost) then
+        AttachmentRoot.attach_to(TargetVehicle, 2, 0, 4, relative)
+    altif TargetVehicle.is_of_type(falcon) then
+        AttachmentRoot.attach_to(TargetVehicle, 0, 0, 10, relative)
+    altif TargetVehicle.is_of_type(mongoose) then
+        AttachmentRoot.attach_to(TargetVehicle, -5, 0, 0, relative)
+    altif TargetVehicle.is_of_type(warthog) then
+        AttachmentRoot.attach_to(TargetVehicle, -5, 0, 5, relative)
+    altif TargetVehicle.is_of_type(scorpion) then
+        AttachmentRoot.attach_to(TargetVehicle, -10, 0, 10, relative)
+    altif TargetVehicle.is_of_type(wraith) then
+        AttachmentRoot.attach_to(TargetVehicle, 0, 0, 12, relative)
+    altif TargetVehicle.is_of_type(revenant) then
+        AttachmentRoot.attach_to(TargetVehicle, 0, 0, 8, relative)
+    altif TargetVehicle.is_of_type(pickup_truck) then
+        AttachmentRoot.attach_to(TargetVehicle, 0, 0, 11, relative)
+    altif TargetVehicle.is_of_type(semi_truck) then
+        AttachmentRoot.attach_to(TargetVehicle, 0, 0, 18, relative)
+    altif TargetVehicle.is_of_type(electric_cart) then
+        AttachmentRoot.attach_to(TargetVehicle, 0, 0, 5, relative)
+    altif TargetVehicle.is_of_type(forklift) then
+        AttachmentRoot.attach_to(TargetVehicle, 0, 0, 6, relative)
+    altif TargetVehicle.is_of_type(oni_van) then
+        AttachmentRoot.attach_to(TargetVehicle, 0, 0, 11, relative)
+    end
+end
 
 for each object do
-   if current_object.is_of_type(banshee) or current_object.is_of_type(ghost) or current_object.is_of_type(falcon) or current_object.is_of_type(mongoose) or current_object.is_of_type(warthog) then
-      if current_object.Processed == 0 then
-         alias this_vehicle = allocate temporary object
-         this_vehicle = current_object
-         RandomAttach = rand(3)
+    if current_object.is_of_type(warthog) or current_object.is_of_type(ghost) or current_object.is_of_type(scorpion) or current_object.is_of_type(wraith) or current_object.is_of_type(banshee) or current_object.is_of_type(mongoose) or current_object.is_of_type(falcon) or current_object.is_of_type(revenant) or current_object.is_of_type(pickup_truck) or current_object.is_of_type(semi_truck) or current_object.is_of_type(electric_cart) or current_object.is_of_type(forklift) or current_object.is_of_type(oni_van) then
+        if current_object.Processed == 0 then
+            alias this_vehicle = allocate temporary object
+            this_vehicle = current_object
+            TargetVehicle = this_vehicle
 
-         if RandomAttach == 0 then
-            alias temp_tank = allocate temporary object
-            temp_tank = current_object.place_at_me(scorpion, none, none, 0, 0, 0, none)
-            for each object do
-               alias d = allocate temporary number
-               d = current_object.get_distance_to(temp_tank)
-               if d == 0 and current_object != this_vehicle and current_object != temp_tank and not current_object.is_of_type(scorpion_turret_anti_infantry) then
-                  current_object.detach()
-                  if this_vehicle.is_of_type(banshee) then
-                     current_object.attach_to(this_vehicle, 7, 0, 4, relative)
-                  altif this_vehicle.is_of_type(ghost) then
-                     current_object.attach_to(this_vehicle, 2, 0, 4, relative)
-                  altif this_vehicle.is_of_type(falcon) then
-                     current_object.attach_to(this_vehicle, 0, 0, 10, relative)
-                  altif this_vehicle.is_of_type(mongoose) then
-                     current_object.attach_to(this_vehicle, -5, 0, 5, relative)
-                  altif this_vehicle.is_of_type(warthog) then
-                     current_object.attach_to(this_vehicle, 0, 0, 11, relative)
-                  end
-                  temp_tank.delete()
-               end
+            if this_vehicle.is_of_type(banshee) or this_vehicle.is_of_type(warthog) or this_vehicle.is_of_type(falcon) then
+                for each object do
+                    alias d = allocate temporary number
+                    d = current_object.get_distance_to(this_vehicle)
+                    if d == 0 and current_object != this_vehicle then
+                        current_object.delete()
+                    end
+                end
             end
-         altif RandomAttach == 1 then
-            alias temp_stand = allocate temporary object
-            temp_stand = current_object.place_at_me(flag_stand, none, none, 0, 0, 0, none)
-            current_object.Attachment = temp_stand.place_at_me(warthog_turret_rocket, none, none, 0, 0, 0, none)
-            current_object.Attachment.attach_to(temp_stand, 0, 0, 0, relative)
-            if current_object.is_of_type(banshee) then
-               temp_stand.attach_to(current_object, 7, 0, 4, relative)
-            altif current_object.is_of_type(ghost) then
-               temp_stand.attach_to(current_object, 2, 0, 4, relative)
-            altif current_object.is_of_type(falcon) then
-               temp_stand.attach_to(current_object, 0, 0, 10, relative)
-            altif current_object.is_of_type(mongoose) then
-               temp_stand.attach_to(current_object, -5, 0, 5, relative)
-            altif current_object.is_of_type(warthog) then
-               temp_stand.attach_to(current_object, 0, 0, 11, relative)
-            end
-            temp_stand.set_scale(1)
-         altif RandomAttach == 2 then
-            alias temp_stand = allocate temporary object
-            temp_stand = current_object.place_at_me(flag_stand, none, none, 0, 0, 0, none)
-            current_object.Attachment = temp_stand.place_at_me(warthog_turret, none, none, 0, 0, 0, none)
-            current_object.Attachment.attach_to(temp_stand, 0, 0, 0, relative)
-            if current_object.is_of_type(banshee) then
-               temp_stand.attach_to(current_object, 7, 0, 4, relative)
-            altif current_object.is_of_type(ghost) then
-               temp_stand.attach_to(current_object, 2, 0, 4, relative)
-            altif current_object.is_of_type(falcon) then
-               temp_stand.attach_to(current_object, 0, 0, 10, relative)
-            altif current_object.is_of_type(mongoose) then
-               temp_stand.attach_to(current_object, -5, 0, 5, relative)
-            altif current_object.is_of_type(warthog) then
-               temp_stand.attach_to(current_object, 0, 0, 11, relative)
-            end
-            temp_stand.set_scale(1)
-         end
 
-         this_vehicle.Processed = 1
-      end
-   end
+            RandomAttach = rand(7)
+
+            if RandomAttach == 0 then
+                alias temp_tank = allocate temporary object
+                temp_tank = this_vehicle.place_at_me(scorpion, none, none, 0, 0, 0, none)
+                temp_tank.Processed = 1
+                for each object do
+                    alias d = allocate temporary number
+                    d = current_object.get_distance_to(temp_tank)
+                    if d == 0 and current_object != this_vehicle and current_object != temp_tank and not current_object.is_of_type(scorpion_turret_anti_infantry) then
+                        current_object.detach()
+                        AttachmentRoot = current_object
+                        attach_root_to_vehicle_point()
+                        temp_tank.delete()
+                    end
+                end
+            altif RandomAttach == 1 then
+                alias rocket_stand = allocate temporary object
+                rocket_stand = this_vehicle.place_at_me(flag_stand, none, none, 0, 0, 0, none)
+                this_vehicle.Attachment = rocket_stand.place_at_me(warthog_turret_rocket, none, none, 0, 0, 0, none)
+                this_vehicle.Attachment.attach_to(rocket_stand, 0, 0, 0, relative)
+                AttachmentRoot = rocket_stand
+                attach_root_to_vehicle_point()
+                rocket_stand.set_scale(1)
+            altif RandomAttach == 2 then
+                alias regular_stand = allocate temporary object
+                regular_stand = this_vehicle.place_at_me(flag_stand, none, none, 0, 0, 0, none)
+                this_vehicle.Attachment = regular_stand.place_at_me(warthog_turret, none, none, 0, 0, 0, none)
+                this_vehicle.Attachment.attach_to(regular_stand, 0, 0, 0, relative)
+                AttachmentRoot = regular_stand
+                attach_root_to_vehicle_point()
+                regular_stand.set_scale(1)
+            altif RandomAttach == 3 then
+                alias gauss_stand = allocate temporary object
+                gauss_stand = this_vehicle.place_at_me(flag_stand, none, none, 0, 0, 0, none)
+                this_vehicle.Attachment = gauss_stand.place_at_me(warthog_turret_gauss, none, none, 0, 0, 0, none)
+                this_vehicle.Attachment.attach_to(gauss_stand, 0, 0, 0, relative)
+                AttachmentRoot = gauss_stand
+                attach_root_to_vehicle_point()
+                gauss_stand.set_scale(1)
+            altif RandomAttach == 4 then
+                alias temp_revenant = allocate temporary object
+                temp_revenant = this_vehicle.place_at_me(revenant, none, none, 0, 0, 0, none)
+                temp_revenant.Processed = 1
+                for each object do
+                    alias d = allocate temporary number
+                    d = current_object.get_distance_to(temp_revenant)
+                    if d == 0 and current_object != this_vehicle and current_object != temp_revenant then
+                        current_object.detach()
+                        AttachmentRoot = current_object
+                        attach_root_to_vehicle_point()
+                        temp_revenant.delete()
+                    end
+                end
+            altif RandomAttach == 5 then
+                alias temp_wraith = allocate temporary object
+                temp_wraith = this_vehicle.place_at_me(wraith, none, none, 0, 0, 0, none)
+                temp_wraith.Processed = 1
+                for each object do
+                    alias d = allocate temporary number
+                    d = current_object.get_distance_to(temp_wraith)
+                    if d == 0 and current_object != this_vehicle and current_object != temp_wraith then
+                        current_object.detach()
+                        AttachmentRoot = current_object
+                        attach_root_to_vehicle_point()
+                        current_object.set_scale(50)
+                        temp_wraith.delete()
+                    end
+                end
+            altif RandomAttach == 6 then
+                this_vehicle.Attachment = this_vehicle.place_at_me(shade, none, none, 0, 0, 0, none)
+                AttachmentRoot = this_vehicle.Attachment
+                attach_root_to_vehicle_point()
+            end
+
+            this_vehicle.Processed = 1
+        end
+    end
 end
 
 -- clean up old attachments if not already deleted
 on object death: do
-   current_object.Attachment.delete()
+    current_object.Attachment.delete()
 end
