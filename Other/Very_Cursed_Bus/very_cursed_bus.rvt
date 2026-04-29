@@ -6,23 +6,23 @@ alias AttachmentRoot = allocate global.object
 
 function attach_root_to_vehicle_point()
     if TargetVehicle.is_of_type(banshee) then
-        AttachmentRoot.attach_to(TargetVehicle, 7, 0, 4, relative)
+        AttachmentRoot.attach_to(TargetVehicle, 7, 0, 6, relative)
     altif TargetVehicle.is_of_type(ghost) then
-        AttachmentRoot.attach_to(TargetVehicle, 2, 0, 4, relative)
+        AttachmentRoot.attach_to(TargetVehicle, 1, 0, 3, relative)
     altif TargetVehicle.is_of_type(falcon) then
-        AttachmentRoot.attach_to(TargetVehicle, 0, 0, 10, relative)
+        AttachmentRoot.attach_to(TargetVehicle, -4, 0, 10, relative)
     altif TargetVehicle.is_of_type(mongoose) then
-        AttachmentRoot.attach_to(TargetVehicle, -5, 0, 0, relative)
+        AttachmentRoot.attach_to(TargetVehicle, -5, 0, 3, relative)
     altif TargetVehicle.is_of_type(warthog) then
-        AttachmentRoot.attach_to(TargetVehicle, -5, 0, 5, relative)
+        AttachmentRoot.attach_to(TargetVehicle, -6, 0, 5, relative)
     altif TargetVehicle.is_of_type(scorpion) then
-        AttachmentRoot.attach_to(TargetVehicle, -10, 0, 10, relative)
+        AttachmentRoot.attach_to(TargetVehicle, -8, 0, 13, relative)
     altif TargetVehicle.is_of_type(wraith) then
         AttachmentRoot.attach_to(TargetVehicle, 0, 0, 12, relative)
     altif TargetVehicle.is_of_type(revenant) then
         AttachmentRoot.attach_to(TargetVehicle, 0, 0, 8, relative)
     altif TargetVehicle.is_of_type(pickup_truck) then
-        AttachmentRoot.attach_to(TargetVehicle, 0, 0, 11, relative)
+        AttachmentRoot.attach_to(TargetVehicle, -6, 0, 5, relative)
     altif TargetVehicle.is_of_type(semi_truck) then
         AttachmentRoot.attach_to(TargetVehicle, 0, 0, 18, relative)
     altif TargetVehicle.is_of_type(electric_cart) then
@@ -45,13 +45,13 @@ for each object do
                 for each object do
                     alias d = allocate temporary number
                     d = current_object.get_distance_to(this_vehicle)
-                    if d == 0 and current_object != this_vehicle then
+                    if d == 0 and current_object != this_vehicle and not current_object.is_of_type(spartan) and not current_object.is_of_type(elite) and not current_object.is_of_type(monitor) then
                         current_object.delete()
                     end
                 end
             end
 
-            RandomAttach = rand(7)
+            RandomAttach = rand(6)
 
             if RandomAttach == 0 then
                 alias temp_tank = allocate temporary object
@@ -120,10 +120,11 @@ for each object do
                         temp_wraith.delete()
                     end
                 end
-            altif RandomAttach == 6 then
-                this_vehicle.Attachment = this_vehicle.place_at_me(shade, none, none, 0, 0, 0, none)
-                AttachmentRoot = this_vehicle.Attachment
-                attach_root_to_vehicle_point()
+                -- shades dont work for some reason
+            -- altif RandomAttach == 6 then
+            --     this_vehicle.Attachment = this_vehicle.place_at_me(shade, none, none, 0, 0, 0, none)
+            --     AttachmentRoot = this_vehicle.Attachment
+            --     attach_root_to_vehicle_point()
             end
 
             this_vehicle.Processed = 1
