@@ -1,0 +1,66 @@
+alias Processed = allocate object.number
+alias Attachment = allocate object.object
+alias Flip      = allocate object.number
+
+on init: do
+    for each player do
+        current_player.set_objective_text("Mongoose Falcon Constraint POC")
+    end
+end
+
+-- Treat the pair as one composite body. If either half dies, remove the other half
+-- so the flip loop never talks to a stale object reference.
+on object death: do
+    if current_object.Processed == 1 then
+        current_object.Attachment.delete()
+    end
+end
+
+-- Spawn one Mongoose on top of each Falcon and remember the pair both ways.
+for each object do
+    if current_object.is_of_type(falcon) then
+        if current_object.Processed == 0 then
+            alias this_falcon = allocate temporary object
+            alias this_mongoose = allocate temporary object
+
+            this_falcon = current_object
+            this_mongoose = this_falcon.place_at_me(mongoose, none, none, 0, 0, 8, none)
+            this_mongoose.Processed = 1
+
+            this_falcon.Attachment = this_mongoose
+            this_mongoose.Attachment = this_falcon
+            this_falcon.Processed = 1
+            this_falcon.Flip = 0
+
+            this_mongoose.attach_to(this_falcon, 0, 0, 8, relative)
+        end
+    end
+end
+
+-- Approximate a symmetric rigid constraint by alternating the physics authority.
+-- Run this locally so the attachment churn is not host-synchronized.
+on local: do
+    for each object do
+        if current_object.is_of_type(falcon) then
+            if current_object.Processed == 1 then
+                alias this_falcon = allocate temporary object
+                alias this_mongoose = allocate temporary object
+
+                this_falcon = current_object
+                this_mongoose = this_falcon.Attachment
+
+                if this_falcon.Flip == 0 then
+                    this_falcon.detach()
+                    this_mongoose.detach()
+                    this_mongoose.attach_to(this_falcon, 0, 0, 8, relative)
+                    this_falcon.Flip = 1
+                altif this_falcon.Flip == 1 then
+                    this_falcon.detach()
+                    this_mongoose.detach()
+                    this_falcon.attach_to(this_mongoose, 0, 0, -8, relative)
+                    this_falcon.Flip = 0
+                end
+            end
+        end
+    end
+end
