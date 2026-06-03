@@ -1,4 +1,4 @@
--- Harlan 2.0.2 Beta by Place & Art
+-- Harlan 2.0 by Place & Art
 --------------------------------------------------------------------------------
 -- HARLAN VERSION: detect harlan_version object for compatibility checks.
 -- ODD ROUND: determine if round is odd-numbered so team names can be switched.
@@ -35,11 +35,12 @@
 -- FALCON DETECTION: Allows players to know if there's falcons on teleports before using them.
 -- PUSH TELEPORTS: Systems that prevents reciever teleports from being blocked by falcons.
 -- PREVENT FLAG GRIEFING: Resets flag if flag should be at home but is away.
+-- HOLOGRAM & ARMOR LOCK TRAITS: Applies traits when armor lock is equipped, and when hologram is in use.
 --------------------------------------------------------------------------------
 -- DEATH BLINKSHOT: Players who destroy monitors labeled as "blinkshot" are teleported to their position.
 --------------------------------------------------------------------------------
 
-alias VERSION = 1
+alias VERSION = 2
 alias FLAG_ZONE_RADIUS = 20
 
 enum map_areas
@@ -78,10 +79,12 @@ alias opt_betrayer_traits  = script_option[6]
 alias all_flags = 0
 alias all_falcons = 1
 
-alias carrier_traits  = script_traits[0]
-alias cooldown_traits = script_traits[1]
-alias betrayer_traits = script_traits[2]
-alias special_traits  = script_traits[3]
+alias carrier_traits    = script_traits[0]
+alias cooldown_traits   = script_traits[1]
+alias betrayer_traits   = script_traits[2]
+alias special_traits    = script_traits[3]
+alias hologram_traits   = script_traits[4]
+alias armor_lock_traits = script_traits[5]
 
 alias ui_alert = script_widget[0]
 alias ui_memorial = script_widget[1]
@@ -110,6 +113,7 @@ alias announced_game_start       = player.number[0]
 alias is_returning_flag          = player.number[1]
 alias betrayals                  = player.number[2]
 alias blinkshot                  = player.object[0]
+alias hologram_biped             = player.object[1]
 alias carrier_cooldown_timer     = player.timer[0]
 alias carry_time_update_interval = player.timer[1]
 alias announce_start_timer       = player.timer[2]
@@ -1623,6 +1627,41 @@ for each team do
         if not current_team.flag_point.shape_contains(current_flag) then
             current_flag.delete()
         end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- HOLOGRAM & ARMOR LOCK TRAITS:
+-- Applies traits when armor lock is equipped, and when hologram is in use.
+--------------------------------------------------------------------------------
+for each player do
+    alias aa = allocate temporary object
+    aa = current_player.get_armor_ability()
+    
+    if aa.is_of_type(hologram) and aa.is_in_use() then
+        if current_player.hologram_biped == no_object then
+            for each object do
+                alias dist = allocate temporary number
+                alias shields = allocate temporary number
+                dist = current_object.get_distance_to(aa)
+                shields = current_object.shields
+                if  dist < 3
+                    and not current_object.is_of_type(spartan)
+                    and not current_object.is_of_type(elite)
+                    and shields > 97
+                then
+                    current_player.hologram_biped = current_object
+                end
+            end
+        end
+    end
+    
+    if aa.is_of_type(armor_lock) then
+        current_player.apply_traits(armor_lock_traits)
+    end
+    
+    if current_player.hologram_biped != no_object then
+        current_player.apply_traits(hologram_traits)
     end
 end
 
