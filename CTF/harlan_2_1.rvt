@@ -1,0 +1,2552 @@
+-- Harlan 2.0 by Place & Art
+--------------------------------------------------------------------------------
+-- HARLAN VERSION: detect harlan_version object for compatibility checks.
+-- ODD ROUND: determine if round is odd-numbered so team names can be switched.
+-- INIT CUSTOM TELEPORTS: converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
+-- QOL TELEPORTS: teleporter waypoints with helpful text.
+-- INIT PUSH TELEPORTS: systems that prevents reciever teleports from being blocked by falcons.
+-- SCALE SYSTEM: allows objects to be scaled in-game.
+--------------------------------------------------------------------------------
+-- LOADOUT PALETTES: set and display loadout palettes.
+-- ROUND CARD: display round card based on relevant game settings.
+-- GAME ANNOUNCES: set up UI and announce game start.
+-- SETUP FLAGS DROP POINTS: initial setup for flag spawn/drop point.
+-- SETUP FLAG INSTANCES: spawn flags as needed.
+-- CLEAR PLAYER WAYPOINTS: clear scripted player waypoints.
+-- TICKS WITHOUT MOVING: counts how many ticks the player has not moved.
+-- PUSHERS & DEFENDERS: roles pushers and defenders, relative to their distance to any flag.
+    -- DEFENDER TRAITS: gives extra radar range when the defender doesn't move for a period of time.
+    -- PUSHER TRAITS: gives 120% of movement speed.
+-- PUSHERS & DEFENDERS ENGAGEMENT: it records who wins the matches between pushers and defenders.
+-- TIME SINCE LAST CAPTURE: unused for now.
+-- PROCESS FLAG STATES: manage flag carrier, flag state, flag waypoint, flag captures, etc.
+    -- FLAG DISPLACEMENT: measures how far from its base each flag is, smoothed with EMA.
+-- PROCESS FLAG RECOVERY: handle flag returns and resets.
+-- PROCESS FLAG NOTIFICATIONS: send incidents for the flag being taken or dropped.
+-- MANAGE CARRIER COOLDOWN: carrier cooldown traits.
+-- HANDLE CARRIER DEATH: handle the carrier being killed.
+-- INITIALIZE FLAG PROXIMITY ZONES: create a boundary for each flag.
+-- UPDATE FLAG ZONE VISIBILITY: show boundary when flag is dropped and stationary.
+-- PROCESS FLAG PRESERVATION: handle preserve boundaries (One Flag).
+-- CLEANUP FLAG CARRIER REFERENCES: detect a flag being dropped (clear last_carrier when no longer carried).
+-- UPDATE DYNAMIC SPAWN ZONES: manage CTF spawn zones.
+-- CLEANUP EMPTY TEAM FLAGS: delete a team's flag if all of their players quit and their flag is at home.
+-- MANAGE ROUND TERMINATION: manage round timer and sudden death.
+--------------------------------------------------------------------------------
+-- QOL FALCON: notify players when falcons have spawned.
+-- CUSTOM TELEPORTS: converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
+-- BLINKSHOT: players who destroy monitors labeled as "blinkshot" are teleported to their position.
+-- SPECIAL WEAPON TRAITS: apply limited traits to players holding certain weapons.
+-- FALCON DETECTION: allows players to know if there's falcons on teleports before using them.
+-- PUSH TELEPORTS: systems that prevents reciever teleports from being blocked by falcons.
+-- PREVENT FLAG GRIEFING: resets flag if flag should be at home but is away.
+-- HOLOGRAM & ARMOR LOCK TRAITS: applies traits when armor lock is equipped, and when hologram is in use.
+-- FLAG CARRIER INVULNERABILITY: applies traits when flag is grabbed for a very short period of time.
+-- WEAPON TRAITS: energy sword, rocket launcher and fuel rod.
+-- BALANCE CASCADE (THROTTLED): throttled recalculation of the balance cascade (rating avg, differentials, advantage score, performance, ratio, state machine).
+    -- TEAM RATING AVERAGE: calculates the team rating average.
+    -- RATING / DISPLACEMENT / SCORE / ENGAGEMENT DIFFERENTIALS: temporary differentials that feed advantage_score.
+    -- ADVANTAGE SCORE: weighted, EMA-smoothed compound score of which team currently has the advantage.
+    -- PLAYER PERFORMANCE: 0-100 individual performance score, combining rating and engagement.
+    -- BALANCE RATIO: converts advantage_score into a percentage Red/Blue split.
+    -- BALANCE STATE MACHINE: hysteresis to decide when to activate/deactivate the imbalance alert.
+    -- BALANCE RATIO & TEAM ADVANTAGE ALERTS: displays the balance ratio and notifies players while the imbalance persists.
+-- MVP ALERT: system that shows in the event-feed who the best performing player is.
+-- FALCON FLAG CARRIER ALERT: ui alert that warns falcon users that flag carrier cannot use the falcon seats.
+-- FALCON DESPAWNING: detects pusher falcons, to despawn them faster.
+-- BETRAYERS: system that penalizes players who have committed more than a certain number of betrayals.
+--------------------------------------------------------------------------------
+-- DEATH BLINKSHOT: players who destroy monitors labeled as "blinkshot" are teleported to their position.
+--------------------------------------------------------------------------------
+
+-- Constants:
+alias VERSION                       = 0     -- gt; gametype version
+alias FLAG_ZONE_RADIUS              = 20    -- ctf; flag's shape radius
+alias FLAG_DISPLACEMENT_NORMALIZER  = 1000  -- gt; divisor used to convert a flag's raw distance from its base into a 0-100 displacement percentage
+alias DISPLACEMENT_EMA_WINDOW       = 8     -- gt; smoothing window (in samples) for flag_displacement_ema
+alias WEIGHT_RATING                 = 35    -- gt; weight of the rating differential in the advantage score
+alias WEIGHT_DISPLACEMENT           = 20    -- gt; weight of the flag displacement differential in the advantage score
+alias WEIGHT_SCORE                  = 15    -- gt; weight of the score differential in the advantage score
+alias WEIGHT_ENGAGEMENT             = 30    -- gt; weight of the push efficiency differential in the advantage score
+alias BALANCE_THRESHOLD_ENTER       = 30    -- gt; magnitude of advantage_score to trigger imbalance alert
+alias BALANCE_THRESHOLD_EXIT        = 20    -- gt; magnitude of advantage_score to disable alert (hysteresis)
+alias BALANCE_REMINDER_INTERVAL     = 45    -- gt; seconds between reminders while the imbalance persists
+alias ENGAGEMENT_EMA_WINDOW         = 10    -- gt; window in events (kills), not in time
+alias ADVANTAGE_EMA_WINDOW          = 8     -- gt; smooths the final compound, absorbs abrupt jumps (in. captures)
+alias PERF_DIVISOR                  = 65    -- gt; = WEIGHT_RATING + WEIGHT_ENGAGEMENT, precalculated by hand (fixed constant, does not change at runtime) to avoid summing it for every player on every tick. If those weights are touched, update this value.
+alias BALANCE_THRESHOLD_ENTER_NEG   = -30   -- gt; = -BALANCE_THRESHOLD_ENTER, precalculated (fixed constant) to avoid negating it every tick in the state machine
+alias BALANCE_THRESHOLD_EXIT_NEG    = -20   -- gt; = -BALANCE_THRESHOLD_EXIT, precalculated (fixed constant) to avoid negating it every tick in the state machine
+alias BALANCE_UPDATE_INTERVAL       = 1     -- gt; seconds between recalculations of the balance cascade (rating avg / diffs / advantage / performance / ratio / state machine). Same pattern as displacement_update_interval (integers only). 1 time/sec is more than enough for a value already smoothed with EMA.
+
+-- Unnamed Forge labels:
+alias all_flags     = 0 -- ctf; forge label used to iterate over every flag object in the map
+alias all_falcons   = 1 -- gt; forge label used to iterate over every falcon in the map
+
+-- Enums:
+enum map_areas -- gt; usual HDB map areas
+    none            = 0
+    middle          = 1
+    valley          = 2
+    hangar          = 3
+    sea_red         = 4
+    sea_blue        = 5
+    red_base        = 6
+    blue_base       = 7
+    centre_island   = 8
+    up              = 9
+    down            = 10
+    bottom          = 11
+    top             = 12
+    road_red        = 13
+    road_blue       = 14
+end
+
+enum sides -- ctf; available side configurations for the gametype (multi flag, one flag, neutral flag)
+    multi
+    one
+    neutral
+end
+
+enum flag_state -- ctf; possible states of a flag (at its base, being carried, or dropped)
+    at_home
+    carried
+    dropped
+end
+
+enum player_role -- gt; role assigned to a player based on proximity to a flag (defender or pusher)
+    none
+    defender
+    pusher
+end
+
+enum balance_state -- gt; current team-balance state used by the imbalance alert (balanced, red advantage, or blue advantage)
+    balanced
+    red_advantage
+    blue_advantage
+end
+
+-- Options:
+alias opt_lead_to_win           = script_option[0]  -- ctf; point lead required to end the round early (0 disables lead to win)
+alias opt_recovery_time         = script_option[1]  -- ctf; time to recover the flag
+alias opt_auto_recover          = script_option[2]  -- ctf; whether dropped flags recover automatically over time
+alias opt_sides                 = script_option[3]  -- ctf; see (sides) enum
+alias opt_flag_at_home          = script_option[4]  -- ctf; flag must be at home to capture
+alias opt_carrier_cooldown      = script_option[5]  -- ctf; flag carrier cooldown traits
+alias opt_betrayer_traits       = script_option[6]  -- gt; enables traits/punishment for repeat betrayers
+alias opt_player_roles_traits   = script_option[7]  -- gt; enables traits for the pusher/defender role system
+alias opt_balance_ratio         = script_option[8]  -- gt; enables the balance cascade (rating/displacement/score/engagement) and its UI
+alias opt_show_advantage_message= script_option[9]  -- gt; enables the significative advantage message
+alias opt_invulnerable_ticks    = script_option[9]  -- gt; number of ticks a flag carrier is invincible for after grabbing the flag
+alias opt_normal_gravity_traits = script_option[10] -- gt; enables normal/low gravity traits for certain weapons
+alias opt_falcon_despawning     = script_option[11] -- gt; idle ticks before a pusher falcon is despawned (0 disables despawning)
+
+-- Traits:
+alias carrier_traits            = script_traits[0] -- ctf; applied while a player grabs the flag
+alias cooldown_traits           = script_traits[1] -- ctf; applied for a limited period of time whenever a flag carrier throws the flag
+alias betrayer_traits           = script_traits[2] -- gt; applied when a player betrays N times
+alias special_weapon_traits     = script_traits[3] -- gt; applied whenever a player has equipped X weapon
+alias hologram_traits           = script_traits[4] -- gt; applied while a hologram exists
+alias armor_lock_traits         = script_traits[5] -- gt; applied while the player has equipped armor lock
+alias pusher_traits             = script_traits[6] -- gt; applied whenever a player is close to the enemy flag, at enemy base
+alias defender_traits           = script_traits[7] -- gt; applied whenever a player is close to his team flag, at his team base, and stays still for a period of time
+alias normal_gravity_traits     = script_traits[8] -- gt; applied whenever a player has equipped X weapon
+alias low_gravity_traits        = script_traits[9] -- gt; applied whenever a player has equipped X weapon
+
+-- Script widgets:
+alias ui_alert          = script_widget[0] -- ctf; shows a message about flag must be at home to capture
+alias ui_balance_ratio  = script_widget[1] -- gt; shows the current balance ratio
+alias ui_team_advantage = script_widget[2] -- gt; shows which team has the current advantage
+alias ui_falcon_alert   = script_widget[3] -- gt; shows that flag carrier cannot use falcon seats
+
+-- Script stats:
+alias captures      = player.script_stat[0] -- ctf; flag captures
+alias carry_time    = player.script_stat[1] -- ctf; flag carry time
+alias returns       = player.script_stat[2] -- ctf; flag returns
+-- alias ...        = player.script_stat[3] -- gt; unused
+
+-- Globals:
+alias sudden_death_enabled          = global.number[0]  -- ctf; whether sudden death is currently allowed to trigger
+alias announced_sudden_death        = global.number[1]  -- ctf; whether the sudden death incident has already been sent this round
+-- alias any_flag_is_being_preserved= global.number[2]  -- ctf; is set, but nothing ever uses it
+-- alias ...                        = global.number[3]  -- ctf; multi-purpose flag
+-- alias ...                        = global.number[4]  -- ctf & gt; multi-purpose flag
+alias odd_round                     = global.number[5]  -- gt; whether the current round is odd-numbered, used to swap team names
+alias current_calculated_scale      = global.number[6]  -- gt; working value used by the scale system while computing an object's final size
+alias recursion_counter             = global.number[7]  -- gt; recursion depth counter for math_precision_calculator, used to stop infinite loops
+alias global_math_buffer            = global.number[8]  -- gt; scratch buffer used by math_precision_calculator for its secondary fractional calculation
+alias balance_ratio_red_shown       = global.number[9]  -- gt; GLOBAL VALUE, last value of balance_ratio_red shown in the UI (avoids redundant set_text)
+alias balance_ratio_blue_shown      = global.number[10] -- gt; GLOBAL VALUE, last value of balance_ratio_blue shown in the UI (avoids redundant set_text)
+-- alias ...                        = global.number[11] -- gt; unused
+
+-- alias ...                        = global.object[0]  -- ctf; multi-purpose global object
+-- alias ...                        = global.object[1]  -- ctf; multi-purpose global object
+alias harlan_version                = global.object[2]  -- gt; used to ensure map compatibility with the gametype
+-- alias ...                        = global.object[3]  -- gt; unused
+-- alias ...                        = global.object[4]  -- gt; unused
+-- alias ...                        = global.object[5]  -- gt; unused
+-- alias ...                        = global.object[6]  -- gt; unused
+-- alias ...                        = global.object[7]  -- gt; unused
+-- alias ...                        = global.object[8]  -- gt; unused
+-- alias ...                        = global.object[9]  -- gt; unused
+-- alias ...                        = global.object[10] -- gt; unused
+-- alias ...                        = global.object[11] -- gt; unused
+-- alias ...                        = global.object[12] -- gt; unused
+-- alias ...                        = global.object[13] -- gt; unused
+-- alias ...                        = global.object[14] -- gt; unused
+-- alias ...                        = global.object[15] -- gt; unused
+
+-- alias ...                        = global.player[0] -- ctf; flag carrier killer
+-- alias ...                        = global.player[1] -- ctf; flag carrier
+alias mvp                           = global.player[2] -- gt; show who is the current player with the highest rating
+-- alias ...                        = global.player[3] -- gt; unused
+-- alias ...                        = global.player[4] -- gt; unused
+-- alias ...                        = global.player[5] -- gt; unused
+-- alias ...                        = global.player[6] -- gt; unused
+-- alias ...                        = global.player[7] -- gt; unused
+
+-- alias ...                        = global.team[0] -- ctf; flag carrier team
+-- alias ...                        = global.team[1] -- gt; unused
+-- alias ...                        = global.team[2] -- gt; unused
+-- alias ...                        = global.team[3] -- gt; unused
+-- alias ...                        = global.team[4] -- gt; unused
+-- alias ...                        = global.team[5] -- gt; unused
+-- alias ...                        = global.team[6] -- gt; unused
+-- alias ...                        = global.team[7] -- gt; unused
+
+-- alias ...                        = global.timer[0] -- gt; unused
+-- alias ...                        = global.timer[1] -- gt; unused
+-- alias ...                        = global.timer[2] -- gt; unused
+-- alias ...                        = global.timer[3] -- gt; unused
+-- alias ...                        = global.timer[4] -- gt; unused
+-- alias ...                        = global.timer[5] -- gt; unused
+-- alias ...                        = global.timer[6] -- gt; unused
+-- alias ...                        = global.timer[7] -- gt; unused
+
+alias announced_game_start          = player.number[0] -- ctf; tracks whether the game start message/incident has been sent to this player
+alias is_returning_flag             = player.number[1] -- ctf; whether this player is currently counted as returning their team's flag
+alias betrayals                     = player.number[2] -- gt; number of betrayals committed by this player
+alias role                          = player.number[3] -- gt; this player's current role, see (player_role) enum
+alias invincible_ticks              = player.number[4] -- gt; ticks elapsed while carrying the flag under opt_invulnerable_ticks
+alias ticks_without_moving          = player.number[5] -- gt; ticks elapsed since this player last moved
+alias engagement_ema                = player.number[6] -- gt; smoothed win rate of this player's pusher/defender engagements
+alias performance                   = player.number[7] -- gt; 0-100 combined performance score used by the MVP system
+
+alias blinkshot                     = player.object[0] -- gt; blinkshot monitor this player is currently attached to
+alias hologram_biped                = player.object[1] -- gt; biped this player's hologram is currently disguised as
+-- alias ...                        = player.object[2] -- gt; unused
+-- alias ...                        = player.object[3] -- gt; unused
+
+alias kill_1                        = player.player[0] -- gt; ...
+-- alias ...                        = player.player[1] -- gt; unused
+-- alias ...                        = player.player[2] -- gt; unused
+-- alias ...                        = player.player[3] -- gt; unused
+
+-- alias ...                        = player.team[0] -- gt; unused
+-- alias ...                        = player.team[1] -- gt; unused
+-- alias ...                        = player.team[2] -- gt; unused
+-- alias ...                        = player.team[3] -- gt; unused
+
+alias carrier_cooldown_timer        = player.timer[0] -- ctf; remaining cooldown traits duration after throwing the flag
+alias carry_time_update_interval    = player.timer[1] -- ctf; throttle used to increment carry_time once per second
+alias announce_start_timer          = player.timer[2] -- ctf; countdown before the game start message/incident is shown
+alias time_between_kills            = player.timer[3] -- gt; ...
+
+alias state                         = object.number[0] -- ctf; flag state, see (flag_state) enum
+alias delay                         = object.number[0] -- gt; generic tick counter reused by teleports and blinkshot for timing detach/despawn
+alias scale_result                  = object.number[0] -- gt; final scale percentage calculated by the scale system
+alias is_blocked                    = object.number[0] -- gt; whether this push_receiver is currently blocked by a falcon
+alias math_remainder                = object.number[1] -- gt; fractional remainder used by math_precision_calculator
+alias is_prepared                   = object.number[1] -- gt; whether this falcon's grace_timer has been initialized
+alias announced_flag_take           = object.number[2] -- ctf; whether the flag-grabbed incident has already been sent for this flag
+alias is_banned                     = object.number[2] -- gt; whether this falcon has been marked for permanent upward ejection
+alias announced_flag_drop           = object.number[3] -- ctf; whether the flag-dropped incident has already been sent for this flag
+alias flag_displacement_ema         = object.number[4] -- gt; smoothed distance (0-100) between this flag and its home base
+alias is_pusher                     = object.number[5] -- gt; whether this falcon is currently being used by a pusher
+-- alias ...                        = object.number[6] -- gt; unused
+-- alias ...                        = object.number[7] -- gt; unused
+
+alias zone                          = object.object[0] -- ctf; flag zone, boundary centered on flag
+alias linked_teleport               = object.object[0] -- gt; the paired custom teleport this one sends players to
+alias saved_teleport                = object.object[0] -- gt; teleport a biped is currently mid-transit through
+alias blinkshot                     = object.object[0] -- gt; blinkshot monitor spawned at this blink_spawn point
+-- alias ...                        = object.object[1] -- gt; unused
+-- alias ...                        = object.object[2] -- gt; unused
+-- alias ...                        = object.object[3] -- gt; unused
+
+alias last_carrier                  = object.player[0] -- ctf; last player known to have carried this flag
+-- alias ...                        = object.player[1] -- gt; unused
+-- alias ...                        = object.player[2] -- gt; unused
+-- alias ...                        = object.player[3] -- gt; unused
+
+-- alias ...                        = object.team[0] -- gt; unused
+-- alias ...                        = object.team[1] -- gt; unused
+
+alias recovery_timer                = object.timer[0] -- ctf; time remaining before a dropped/away flag resets
+alias grace_timer                   = object.timer[0] -- ctf; time a falcon has spent blocking a push_receiver, used to trigger ejection
+-- alias return_timer               = object.timer[1] -- ctf; unused
+alias falcon_idle_timer             = object.timer[1] -- gt; ticks a pusher falcon has been idle, used to despawn it
+alias notification_throttle         = object.timer[2] -- ctf; throttle between flag take/drop notification checks
+alias displacement_update_interval  = object.timer[3] -- gt; throttle for sampling flag_displacement_ema (once per second)
+
+alias player_count                  = team.number[0] -- gt; number of players currently on this team
+alias rating                        = team.number[1] -- gt; sum of ratings of all players on this team
+alias rating_avg                    = team.number[2] -- gt; average rating of players on this team
+alias push_efficiency_ema           = team.number[3] -- gt; smoothed win rate of this team's pushers against enemy defenders
+alias advantage_score               = team.number[4] -- gt; GLOBAL VALUE, running compound score representing which team currently has the advantage (-100 to 100, negative = blue advantage, positive = red advantage), smoothed with EMA
+alias imbalance_state               = team.number[5] -- gt; GLOBAL VALUE, current balance_state used by the hysteresis alert system
+alias balance_ratio_red             = team.number[6] -- gt; GLOBAL VALUE, current percentage of team balance assigned to Red
+alias balance_ratio_blue            = team.number[7] -- gt; GLOBAL VALUE, current percentage of team balance assigned to Blue
+
+alias flag_point                    = team.object[0] -- ctf; spawn and drop point
+alias flag                          = team.object[1] -- ctf; this team's flag object
+-- alias ...                        = team.object[2] -- gt; unused
+-- alias ...                        = team.object[3] -- gt; unused
+-- alias ...                        = team.object[4] -- gt; unused
+-- alias ...                        = team.object[5] -- gt; unused
+
+-- alias ...                        = team.player[0] -- gt; unused
+-- alias ...                        = team.player[1] -- gt; unused
+-- alias ...                        = team.player[2] -- gt; unused
+-- alias ...                        = team.player[3] -- gt; unused
+
+-- alias ...                        = team.team[0] -- gt; unused
+-- alias ...                        = team.team[1] -- gt; unused
+-- alias ...                        = team.team[2] -- gt; unused
+-- alias ...                        = team.team[3] -- gt; unused
+
+alias time_since_last_capture       = team.timer[0] -- gt; time elapsed since this team's last capture
+alias balance_reminder_timer        = team.timer[1] -- gt; GLOBAL VALUE
+alias balance_update_interval       = team.timer[2] -- gt; GLOBAL VALUE, throttle for the balance cascade
+-- alias ...                        = team.timer[3] -- gt; unused
+
+declare sudden_death_enabled        with network priority local -- ctf; whether sudden death is currently allowed to trigger
+declare announced_sudden_death      with network priority local -- ctf; whether the sudden death incident has already been sent this round
+-- declare any_flag_is_being_preserved with network priority low   -- ctf; is set, but nothing ever uses it
+declare global.number[3]            with network priority local -- ctf; multi-purpose flag
+declare global.number[4]            with network priority local -- ctf; shared multi-purpose flag, used by both the ctf and gt systems
+declare current_calculated_scale    with network priority low   -- gt; working value used by the scale system while computing an object's final size
+declare recursion_counter           with network priority low   -- gt; recursion depth counter for math_precision_calculator, used to stop infinite loops
+declare global_math_buffer          with network priority low   -- gt; scratch buffer used by math_precision_calculator for its secondary fractional calculation
+declare odd_round                   with network priority local -- gt; whether the current round is odd-numbered, used to swap team names
+declare balance_ratio_red_shown     with network priority low   -- gt; last balance_ratio_red value shown in the UI, avoids redundant set_text calls
+declare balance_ratio_blue_shown    with network priority low   -- gt; last balance_ratio_blue value shown in the UI, avoids redundant set_text calls
+declare global.object[0]            with network priority local -- ctf; multi-purpose global object
+declare global.object[1]            with network priority local -- ctf; multi-purpose global object
+declare harlan_version              with network priority local -- gt; used to ensure map compatibility with the gametype
+declare global.player[0]            with network priority local -- ctf; flag carrier killer
+declare global.player[1]            with network priority local -- ctf; flag carrier
+declare mvp                         with network priority low   -- gt; the current player with the highest rating/performance
+declare global.team[0]              with network priority local -- ctf; flag carrier team
+
+declare player.announced_game_start         with network priority low   -- ctf; tracks whether the game start message/incident has been sent to this player
+declare player.is_returning_flag            with network priority low   -- ctf; whether this player is currently counted as returning their team's flag
+declare player.betrayals                    with network priority low   -- gt; number of betrayals committed by this player
+declare player.carry_time_update_interval   = 1                         -- ctf; throttle used to increment carry_time once per second
+declare player.announce_start_timer         = 5                         -- ctf; countdown before the game start message/incident is shown
+declare player.invincible_ticks             = 0                         -- gt; ticks elapsed while carrying the flag under opt_invulnerable_ticks
+declare player.ticks_without_moving         = 0                         -- gt; ticks elapsed since this player last moved
+declare player.engagement_ema               with network priority low   -- gt; smoothed win rate of this player's pusher/defender engagements
+declare player.performance                  with network priority low   -- gt; 0-100 combined performance score used by the MVP system
+declare player.kill_1                       with network priority low   -- gt; ...
+declare player.time_between_kills           = 5                         -- gt; ...
+
+declare object.state                        with network priority low       -- ctf; flag state, see (flag_state) enum
+-- declare object.number[1]                 with network priority low = 1   -- ctf; unused
+declare object.announced_flag_take          with network priority local     -- ctf; whether the flag-grabbed incident has already been sent for this flag
+declare object.announced_flag_drop          with network priority local     -- ctf; whether the flag-dropped incident has already been sent for this flag
+declare object.zone                         with network priority low       -- ctf; flag zone, boundary centered on flag
+declare object.is_pusher                    with network priority low = 0   -- gt; whether this falcon is currently being used by a pusher
+declare object.last_carrier                 with network priority low       -- ctf; last player known to have carried this flag
+declare object.recovery_timer               = opt_recovery_time             -- ctf; time remaining before a dropped/away flag resets
+-- declare object.return_timer              = 0                             -- ctf; unused
+declare object.falcon_idle_timer            = opt_falcon_despawning         -- gt; ticks a pusher falcon has been idle, used to despawn it
+declare object.notification_throttle        = 3                             -- ctf; throttle between flag take/drop notification checks
+declare object.flag_displacement_ema        with network priority low = 0   -- gt; smoothed distance (0-100) between this flag and its home base
+declare object.displacement_update_interval = 1                             -- gt; throttle for sampling flag_displacement_ema (once per second)
+
+declare team.flag_point                 with network priority low   -- ctf; spawn and drop point
+declare team.flag                       with network priority low   -- ctf; this team's flag object
+declare team.player_count               = 0
+declare team.rating                     with network priority low   -- gt; sum of ratings of all players on this team
+declare team.rating_avg                 with network priority low   -- gt; average rating of players on this team
+declare team.push_efficiency_ema        with network priority low   -- gt; smoothed win rate of this team's pushers against enemy defenders
+declare team.time_since_last_capture    = 0                         -- gt; time elapsed since this team's last capture
+declare team.advantage_score            with network priority low   -- gt; GLOBAL VALUE, running compound score representing which team currently has the advantage
+declare team.imbalance_state            with network priority low   -- gt; GLOBAL VALUE, current balance_state used by the hysteresis alert system
+declare team.balance_reminder_timer     = BALANCE_REMINDER_INTERVAL -- gt; GLOBAL VALUE, countdown between imbalance reminder messages
+declare team.balance_update_interval    = BALANCE_UPDATE_INTERVAL   -- gt; GLOBAL VALUE, throttle for the balance cascade (1 sec, integers only)
+declare team.balance_ratio_red          with network priority low   -- gt; GLOBAL VALUE, current percentage of team balance assigned to Red
+declare team.balance_ratio_blue         with network priority low   -- gt; GLOBAL VALUE, current percentage of team balance assigned to Blue
+
+do
+    sudden_death_enabled = 0
+end
+
+on pregame: do
+    game.symmetry = 1
+    if opt_sides == sides.one then 
+        game.symmetry = 0
+    end
+end
+
+on init: do
+    ----------------------------------------------------------------------------
+    -- HARLAN VERSION:
+    -- detect harlan_version object for compatibility checks.
+    ----------------------------------------------------------------------------
+    harlan_version = no_object
+    for each object with label "harlan_version" do
+        harlan_version = current_object
+    end
+    
+    ----------------------------------------------------------------------------
+    -- ODD ROUND:
+    -- determine if round is odd-numbered so team names can be switched.
+    ----------------------------------------------------------------------------
+    odd_round = game.current_round
+    odd_round %= 2 -- Is round odd
+
+    ----------------------------------------------------------------------------
+    -- INIT CUSTOM TELEPORTS:
+    -- converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
+    ----------------------------------------------------------------------------
+    -- This code below initializes the custom teleports.
+    for each object with label "teleporter" do
+        alias c_teleport = current_object
+
+        -- If this object meets the requirements to be a custom teleport.
+        if  c_teleport.spawn_sequence > 0 and
+            c_teleport.is_of_type(hill_marker) or
+            c_teleport.is_of_type(capture_plate)
+        then
+            alias c_teleport = current_object
+
+            c_teleport.set_waypoint_range(0, 10)
+            c_teleport.set_waypoint_visibility(everyone)
+            c_teleport.set_waypoint_priority(low)   
+
+            if c_teleport.is_of_type(hill_marker) then
+                c_teleport.set_shape_visibility(everyone)  
+                                
+            altif c_teleport.is_of_type(capture_plate) then
+                c_teleport.set_shape_visibility(no_one)
+            end
+        end
+    end
+
+    -- This code below links custom teleports that have the same spawn_sequence.
+    for each object with label "teleporter" do
+        alias c_teleport = allocate global.object
+        c_teleport = current_object
+
+        if  c_teleport.spawn_sequence > 0 and 
+            c_teleport.is_of_type(hill_marker) or
+            c_teleport.is_of_type(capture_plate) 
+        then
+            for each object with label "teleporter" do
+                alias temp_teleport = current_object
+        
+                if  temp_teleport.spawn_sequence > 0 and 
+                    temp_teleport.is_of_type(hill_marker) or
+                    temp_teleport.is_of_type(capture_plate) 
+                then
+                    -- If these teleports are not the same one.
+                    if c_teleport != temp_teleport then
+                        if temp_teleport.spawn_sequence == c_teleport.spawn_sequence then
+                            -- Team-based linking only for new maps with harlan_version
+                            if harlan_version != no_object then
+                                if temp_teleport.team == c_teleport.team then
+                                    c_teleport.linked_teleport = temp_teleport
+                                    temp_teleport.linked_teleport = c_teleport
+                                end
+                            alt
+                                -- Legacy mode: link by spawn_sequence only
+                                c_teleport.linked_teleport = temp_teleport
+                                temp_teleport.linked_teleport = c_teleport
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    ----------------------------------------------------------------------------
+    -- QOL TELEPORTS:
+    -- teleporter waypoints with helpful text.
+    ----------------------------------------------------------------------------
+    for each object with label "teleporter" do
+        alias c_teleport = current_object
+        alias show_text = allocate temporary number
+        show_text = 1
+
+        if not c_teleport.is_of_type(capture_plate) then
+            -- Check if this is a bidirectional pair
+            if c_teleport.is_of_type(hill_marker) 
+                and c_teleport.linked_teleport != no_object 
+                and c_teleport.linked_teleport.is_of_type(hill_marker)
+            then
+                show_text = 0
+            end
+
+            -- Shape
+            c_teleport.set_shape_visibility(everyone)
+    
+            -- Waypoint
+            c_teleport.set_waypoint_visibility(everyone)
+            c_teleport.set_waypoint_priority(low)
+            c_teleport.set_waypoint_range(0, 20)
+            
+            if  harlan_version != no_object
+            and harlan_version.spawn_sequence < 1
+            and show_text == 1
+            then
+                if c_teleport.spawn_sequence == map_areas.middle then
+                    c_teleport.set_waypoint_text("Middle")
+                end
+
+                if c_teleport.spawn_sequence == map_areas.valley then
+                    c_teleport.set_waypoint_text("Valley")
+                end
+
+                if c_teleport.spawn_sequence == map_areas.hangar then
+                    c_teleport.set_waypoint_text("Hangar")
+                end
+                
+                if c_teleport.spawn_sequence == map_areas.sea_red then
+                    if odd_round == 0 then
+                        c_teleport.set_waypoint_text("Sea Red")
+                    alt
+                        c_teleport.set_waypoint_text("Sea Blue")
+                    end
+                end
+                
+                if c_teleport.spawn_sequence == map_areas.sea_blue then
+                    if odd_round == 0 then
+                        c_teleport.set_waypoint_text("Sea Blue")
+                    alt
+                        c_teleport.set_waypoint_text("Sea Red")
+                    end
+                end
+                
+                if c_teleport.spawn_sequence == map_areas.red_base then
+                    if odd_round == 0 then
+                        c_teleport.set_waypoint_text("Red Base")
+                    alt
+                        c_teleport.set_waypoint_text("Blue Base")
+                    end
+                end
+                
+                if c_teleport.spawn_sequence == map_areas.blue_base then
+                    if odd_round == 0 then
+                        c_teleport.set_waypoint_text("Blue Base")
+                    alt
+                        c_teleport.set_waypoint_text("Red Base")
+                    end
+                end
+                
+                if c_teleport.spawn_sequence == map_areas.centre_island then
+                    c_teleport.set_waypoint_text("Island")
+                end
+                
+                if c_teleport.spawn_sequence == map_areas.up then
+                    c_teleport.set_waypoint_text("Up")
+                end
+                
+                if c_teleport.spawn_sequence == map_areas.down then
+                    c_teleport.set_waypoint_text("Down")
+                end
+                
+                if c_teleport.spawn_sequence == map_areas.bottom then
+                    c_teleport.set_waypoint_text("Bottom")
+                end
+
+                if c_teleport.spawn_sequence == map_areas.top then
+                    c_teleport.set_waypoint_text("Top")
+                end
+
+                if c_teleport.spawn_sequence == map_areas.road_red then
+                    c_teleport.set_waypoint_text("Road Red")
+                end
+
+                if c_teleport.spawn_sequence == map_areas.road_blue then
+                    c_teleport.set_waypoint_text("Road Blue")
+                end
+            end
+        end
+    end
+
+    ----------------------------------------------------------------------------
+    -- INIT PUSH TELEPORTS: 
+    -- systems that prevents reciever teleports from being blocked by falcons.
+    ----------------------------------------------------------------------------
+    for each object with label "push_receiver" do
+        alias c_receiver = current_object
+
+        c_receiver.is_blocked = 0
+        c_receiver.set_shape(cylinder, 20, 15, 0)
+        c_receiver.set_waypoint_range(0, 20)
+        c_receiver.set_waypoint_text("Do not block!")
+        c_receiver.set_waypoint_visibility(no_one)
+    end
+
+    ----------------------------------------------------------------------------
+    -- SCALE SYSTEM:
+    -- allows objects to be scaled in-game.
+    ----------------------------------------------------------------------------
+    if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
+        function math_precision_calculator()
+            alias subject = current_object
+
+            -- We increment the recursion counter to avoid infinite loops.
+            recursion_counter += 1
+
+            -- Start of the mathematical smoothing algorithm:
+            -- It takes the current size and saves it in the waste buffer.
+            subject.math_remainder = subject.scale_result
+
+            -- Divide the remainder by 33 (simulate 3%).
+            subject.math_remainder /= 33
+
+            -- It takes the current size, passes it to the global buffer and divides it by 228 (simulating 0.4%).
+            global_math_buffer = subject.scale_result
+            global_math_buffer /= 228
+
+            -- Add both fractional results to the total size.
+            -- This creates compound growth with each iteration.
+            subject.scale_result += subject.math_remainder
+            subject.scale_result += global_math_buffer
+
+            -- If the recursion counter has not yet reached the limit defined in current_calculated_scale...
+            if recursion_counter < current_calculated_scale then
+                -- ...it calls itself to continue calculating.
+                math_precision_calculator()
+            end
+        end
+
+        for each object with label "scale" do
+            alias subject = current_object
+
+            -- We initialize the current scale with the value of the Spawn Sequence.
+            current_calculated_scale = subject.spawn_sequence
+
+            -- Initial base of 100%
+            subject.scale_result = 100
+            current_calculated_scale = subject.spawn_sequence
+
+            -- If it is negative, we apply a multiplier of x5
+            if subject.spawn_sequence < 0 then
+                current_calculated_scale *= 5
+                subject.scale_result += current_calculated_scale
+
+                -- Special case: Spawn Sequence -20 strength scales to 1%
+                if subject.spawn_sequence == -20 then
+                    subject.scale_result = 1
+                end
+
+                -- Special calculation for values ​​less than -20
+                if subject.spawn_sequence < -20 then
+                    current_calculated_scale = 100
+                    current_calculated_scale += subject.spawn_sequence
+                    current_calculated_scale += 101
+                end
+            end
+
+            -- If it is outside the safe range (-20 to 0), we activate recursion.
+            if subject.spawn_sequence < -20 or subject.spawn_sequence > 0 then
+                subject.scale_result = 100
+                    
+                -- Reset global counter
+                recursion_counter = 0
+
+                math_precision_calculator()
+            end
+
+            -- We assign the final calculated result to the current value
+            current_calculated_scale = subject.scale_result
+
+            -- We save the final calculation in the object's memory for future reference.
+            subject.scale_result = current_calculated_scale
+
+            -- We performed the actual resizing in the game engine.
+            subject.set_scale(current_calculated_scale)
+
+            -- We copy rotation on itself to force the physics update.
+            subject.copy_rotation_from(subject, false)
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- LOADOUT PALETTES:
+-- set and display loadout palettes.
+--------------------------------------------------------------------------------
+for each player do
+    if current_player.is_elite() then 
+        current_player.set_loadout_palette(elite_tier_1)
+    end
+
+    if not current_player.is_elite() then 
+        current_player.set_loadout_palette(spartan_tier_1)
+    end
+end
+
+--------------------------------------------------------------------------------
+-- ROUND CARD:
+-- display round card based on relevant game settings.
+--------------------------------------------------------------------------------
+for each player do
+    current_player.announce_start_timer.set_rate(-100%)
+
+    if opt_sides == sides.one and current_player.team == team[1] then 
+        current_player.set_objective_text("Capture the enemy flag.\r\n%n rounds.", game.round_limit)
+        current_player.set_objective_allegiance_name("Offense")
+        current_player.set_objective_allegiance_icon(attack)
+    end
+
+    if opt_sides == sides.one and current_player.team == team[0] then 
+        current_player.set_objective_text("Defend your flag.\r\n%n rounds.", game.round_limit)
+        current_player.set_objective_allegiance_name("Defense")
+        current_player.set_objective_allegiance_icon(defend)
+    end
+
+    if game.score_to_win != 0 and opt_sides == sides.neutral or opt_sides == sides.multi then
+        if opt_lead_to_win >= game.score_to_win or opt_lead_to_win == 0 then
+            current_player.set_objective_text("Capture the flag.\r\n%n points to win.", game.score_to_win)
+        alt -- Lead to win
+            current_player.set_objective_text("Capture the flag.\r\n%n point lead or %n points to win.", opt_lead_to_win, game.score_to_win)
+        end
+    end
+
+    if game.score_to_win == 0 and opt_sides == sides.neutral or opt_sides == sides.multi then 
+        if opt_lead_to_win == 0 then
+            current_player.set_objective_text("Capture the flag.")
+        alt -- Lead to win
+            current_player.set_objective_text("Capture the flag.\r\n%n point lead to win.", opt_lead_to_win)
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- GAME ANNOUNCES:
+-- set up UI and announce game start.
+--------------------------------------------------------------------------------
+for each player do
+    ui_alert.set_text("Your flag must be at home to score!")
+    ui_alert.set_visibility(current_player, false)
+
+    if current_player.announced_game_start == 0 then
+        if current_player.announce_start_timer == 1 then
+            game.show_message_to(current_player, none, "Version 2.1.%n by PlaceHolder021 & realArtVandelay", VERSION)
+            current_player.announced_game_start = 1
+        end
+    end
+
+    if current_player.announced_game_start == 1 then
+        if current_player.announce_start_timer.is_zero() then
+            if harlan_version != no_object then
+                if harlan_version.spawn_sequence == 0 then
+                    game.show_message_to(current_player, none, "Harlan Desert Bus")
+                altif harlan_version.spawn_sequence != 0 then
+                    game.show_message_to(current_player, none, "WARNING: Map expects newer version of this gametype")
+                end
+            end
+
+            send_incident(ctf_game_start, current_player, no_player)
+            current_player.announced_game_start = 2
+
+            if opt_sides == sides.one and current_player.team == team[1] then 
+                send_incident(team_offense, current_player, no_player)
+            end
+
+            if opt_sides == sides.one and current_player.team == team[0] then 
+                send_incident(team_defense, current_player, no_player)
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- SETUP FLAGS DROP POINTS:
+-- initial setup for flag spawn/drop point.
+--------------------------------------------------------------------------------
+for each team do 
+    if current_team.flag_point == no_object then 
+        for each object with label "ctf_flag_return" do
+            if current_team.flag_point == no_object and current_object.team == current_team then 
+                current_team.flag_point = current_object
+                current_object.set_waypoint_visibility(allies)
+                current_object.set_waypoint_icon(diamond)
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- SETUP FLAG INSTANCES:
+-- spawn flags as needed.
+--------------------------------------------------------------------------------
+for each team do 
+    current_team.flag.set_waypoint_visibility(everyone)
+
+    if  current_team == neutral_team
+        or  current_team.has_any_players()
+        and current_team.flag == no_object
+        and current_team.flag_point != no_object
+    then
+        alias should_spawn_flag = global.number[3]
+        should_spawn_flag = 0
+
+        if  opt_sides == sides.multi 
+            and current_team != neutral_team 
+            and current_team.has_any_players() 
+        then 
+            should_spawn_flag = 1
+        end
+
+        if opt_sides == sides.one and current_team == team[0] then 
+            team[1].flag_point.set_waypoint_visibility(everyone)
+            team[0].flag_point.set_waypoint_visibility(no_one)
+            should_spawn_flag = 1
+        end
+
+        if opt_sides == sides.neutral and current_team == neutral_team then 
+            should_spawn_flag = 1
+        end
+
+        if should_spawn_flag == 1 then 
+            if opt_sides == sides.one or opt_sides == sides.neutral then
+                --
+                -- If this is One Flag or Neutral Flag, see if there is an existing flag
+                -- and if so, take ownership of it.
+                --
+                for each object do
+                    if current_object.is_of_type(flag) then 
+                        current_team.flag = current_object
+                        should_spawn_flag = 0
+                    end
+                end
+            end
+
+            if opt_sides == sides.multi then
+                --
+                -- If this is Multi Flag and the flag somehow tests as unowned, take
+                -- ownership of it.
+                --
+                for each object do
+                    if current_object.is_of_type(flag) and should_spawn_flag == 1 then 
+                        alias is_unowned = global.number[4]
+                        alias current_carrier = global.player[1]
+                        
+                        is_unowned = 1
+                        do -- check if flag carrier is on this team
+                            current_carrier = no_player
+                            current_carrier = current_object.get_carrier()
+
+                            if  current_carrier != no_player 
+                                and current_carrier.team == current_team then 
+                                is_unowned = 0 -- don't take ownership of an enemy flag being carried by one of our players
+                            end
+                        end
+
+                        for each team do
+                            if current_team.flag == current_object then 
+                                is_unowned = 0
+                            end
+                        end
+
+                        if is_unowned == 1 then 
+                            current_team.flag = current_object
+                            should_spawn_flag = 0
+                        end
+                    end
+                end
+            end
+
+            if should_spawn_flag == 1 then 
+                current_team.flag = current_team.flag_point.place_at_me(flag, none, never_garbage_collect, 0, 0, 3, none)
+            end
+            
+            alias current_flag = global.object[0]
+            current_flag = current_team.flag
+
+            if should_spawn_flag == 0 then 
+                current_flag.state = flag_state.carried
+            end
+
+            current_flag.team = current_team
+            current_team.flag.set_pickup_permissions(enemies)
+            current_team.flag.set_weapon_pickup_priority(high)
+            current_team.flag.set_waypoint_icon(flag)
+            current_team.flag.set_waypoint_priority(high)
+            current_flag.set_shape(cylinder, 7, 6, 3)
+
+            if opt_sides == sides.neutral then 
+                current_team.flag.set_pickup_permissions(everyone)
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- CLEAR PLAYER WAYPOINTS:
+-- clear scripted player waypoints.
+--------------------------------------------------------------------------------
+for each player do 
+    current_player.biped.set_waypoint_icon(none)
+end
+
+--------------------------------------------------------------------------------
+-- TICKS WITHOUT MOVING:
+-- counts how many ticks the player has not moved.
+--------------------------------------------------------------------------------
+for each player do
+    alias c_player = current_player
+
+    alias speed = allocate temporary number
+    speed = c_player.biped.get_speed()     
+
+    if speed <= 5 then
+        c_player.ticks_without_moving += 1   
+
+    altif speed > 5 then
+        c_player.ticks_without_moving = 0
+    end
+end
+
+--------------------------------------------------------------------------------
+-- DOUBLE KILL AS PUSHER:
+-- system to detect when a pusher has been able to do a double kill.
+--------------------------------------------------------------------------------
+if opt_player_roles_traits == 1 then
+    for each player do
+        alias c_player = current_player
+    
+        if c_player.kill_1 != no_player then
+            c_player.time_between_kills.set_rate(-100%)
+    
+            if c_player.time_between_kills <= 0 then
+                c_player.kill_1 = no_player
+                c_player.time_between_kills.reset()            
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------
+-- PUSHERS & DEFENDERS:
+-- roles pushers and defenders, relative to their distance to any flag.
+--------------------------------------------------------------------
+for each player do
+    alias c_player = current_player
+    c_player.role = player_role.none
+
+    for each object with label all_flags do
+        alias c_flag = current_object       
+
+        alias dist_to_player = allocate temporary number
+        dist_to_player = c_flag.get_distance_to(c_player.biped)    
+
+        if dist_to_player <= 200 then
+            if c_player.team == c_flag.team then
+                c_player.role = player_role.defender
+            
+            altif c_player.team != c_flag.team and c_player.role != player_role.defender then
+                c_player.role = player_role.pusher
+            end
+        end
+
+        alias dist_to_stand = allocate temporary number
+        dist_to_stand = 1000 
+
+        for each team do
+            alias c_team = current_team 
+
+            alias c_stand = allocate temporary object
+            c_stand = c_team.flag_point     
+
+            if c_stand != no_object and c_stand.team == c_flag.team then
+                dist_to_stand = c_flag.get_distance_to(c_stand)
+            end
+        end 
+
+        if opt_player_roles_traits == 1 then
+            if c_player.role != player_role.none and dist_to_stand <= 400 then
+    --------------------------------------------------------------------------------
+    -- DEFENDER TRAITS:
+    -- gives extra radar range when the defender doesn't move for a period of time.
+    --------------------------------------------------------------------------------
+                if c_player.role == player_role.defender and c_player.ticks_without_moving >= 300 then
+                    c_player.apply_traits(defender_traits)
+    --------------------------------------------------------------------------------
+    -- PUSHER TRAITS:
+    -- gives 120% of movement speed.
+    --------------------------------------------------------------------------------
+                altif c_player.role == player_role.pusher then
+                    c_player.apply_traits(pusher_traits)
+                end 
+            end
+        end
+--------------------------------------------------------------------------------
+-- PUSHERS & DEFENDERS ENGAGEMENT:
+-- it records who wins the matches between pushers and defenders.
+--------------------------------------------------------------------------------
+        if c_player.role == player_role.defender and c_player.killer_type_is(kill) then
+            alias killer = allocate temporary player
+            killer = c_player.try_get_killer()  
+    
+            if killer != no_player and killer.role == player_role.pusher then
+                if opt_player_roles_traits == 1 then
+
+                    if killer.kill_1 == no_player then
+                        killer.kill_1 = c_player
+
+                    altif killer.kill_1 != no_player and killer.kill_1 != c_player then
+                        if killer.time_between_kills > 0 then
+                            killer.plasma_grenades += 1
+                        end
+                    end
+                end
+            
+                if opt_balance_ratio == 1 then
+                    alias winner_team = allocate temporary team
+                    alias loser_team  = allocate temporary team
+                    alias temp = allocate temporary number
+    
+                    winner_team = killer.team
+                    loser_team = c_player.team
+    
+                    temp = winner_team.push_efficiency_ema
+                    temp /= ENGAGEMENT_EMA_WINDOW
+                    winner_team.push_efficiency_ema -= temp
+                    temp = 100
+                    temp /= ENGAGEMENT_EMA_WINDOW
+                    winner_team.push_efficiency_ema += temp
+    
+                    temp = loser_team.push_efficiency_ema
+                    temp /= ENGAGEMENT_EMA_WINDOW
+                    loser_team.push_efficiency_ema -= temp
+    
+                    temp = killer.engagement_ema
+                    temp /= ENGAGEMENT_EMA_WINDOW
+                    killer.engagement_ema -= temp
+                    temp = 100
+                    temp /= ENGAGEMENT_EMA_WINDOW
+                    killer.engagement_ema += temp
+    
+                    temp = c_player.engagement_ema
+                    temp /= ENGAGEMENT_EMA_WINDOW
+                    c_player.engagement_ema -= temp
+                end
+    
+            altif c_player.role == player_role.pusher and c_player.killer_type_is(kill) then
+                alias killer = allocate temporary player
+                killer = c_player.try_get_killer()            
+    
+                if killer != no_player and killer.role == player_role.defender then
+                    if opt_balance_ratio == 1 then
+                        alias winner_team = allocate temporary team
+                        alias loser_team  = allocate temporary team
+                        alias temp = allocate temporary number
+        
+                        winner_team = killer.team
+                        loser_team = c_player.team
+        
+                        temp = winner_team.push_efficiency_ema
+                        temp /= ENGAGEMENT_EMA_WINDOW
+                        winner_team.push_efficiency_ema -= temp
+                        temp = 100
+                        temp /= ENGAGEMENT_EMA_WINDOW
+                        winner_team.push_efficiency_ema += temp
+        
+                        temp = loser_team.push_efficiency_ema
+                        temp /= ENGAGEMENT_EMA_WINDOW
+                        loser_team.push_efficiency_ema -= temp
+                        
+                        temp = killer.engagement_ema
+                        temp /= ENGAGEMENT_EMA_WINDOW
+                        killer.engagement_ema -= temp
+                        temp = 100
+                        temp /= ENGAGEMENT_EMA_WINDOW
+                        killer.engagement_ema += temp
+        
+                        temp = c_player.engagement_ema
+                        temp /= ENGAGEMENT_EMA_WINDOW
+                        c_player.engagement_ema -= temp
+                    end
+                end
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- TIME SINCE LAST CAPTURE:
+-- related to balance system.
+--------------------------------------------------------------------------------
+for each team do
+    alias c_team = current_team
+    c_team.time_since_last_capture.set_rate(100%)
+end
+
+--------------------------------------------------------------------------------
+-- PROCESS FLAG STATES:
+-- manage flag carrier, flag state, flag waypoint, flag captures, etc.
+--------------------------------------------------------------------------------
+for each team do 
+    alias current_flag = global.object[0]
+    alias flag_carrier = global.player[1]
+    
+    current_flag = current_team.flag
+    flag_carrier = no_player
+    -- any_flag_is_being_preserved = 0
+    flag_carrier = current_flag.get_carrier()
+
+    -- remember flag carrier, confer traits, and track carry time
+    if flag_carrier != no_player then 
+        current_flag.last_carrier = flag_carrier
+        flag_carrier.apply_traits(carrier_traits)
+        flag_carrier.carry_time_update_interval.set_rate(-100%)
+
+        if flag_carrier.carry_time_update_interval.is_zero() then 
+            flag_carrier.carry_time += 1
+            flag_carrier.carry_time_update_interval.reset()
+        end
+    end
+
+    -- manage carried flag: waypoint, state, capture check
+    if flag_carrier != no_player then 
+        alias carrier_team = global.team[0]
+        alias flag_zone    = global.object[1]
+        
+        flag_zone = current_flag.zone
+        current_flag.set_waypoint_visibility(no_one)
+        current_flag.set_waypoint_timer(none) -- ensure carried flags have no waypoint timer
+        flag_carrier.biped.set_waypoint_icon(flag)
+        current_flag.state = flag_state.carried
+        current_flag.recovery_timer = opt_recovery_time
+        flag_zone.recovery_timer = opt_recovery_time
+        flag_zone.set_progress_bar(object.recovery_timer, no_one)
+        sudden_death_enabled = 1
+        flag_carrier.carrier_cooldown_timer = opt_carrier_cooldown
+        carrier_team = flag_carrier.team
+
+        -- handle flag capture
+        if carrier_team.flag_point.shape_contains(flag_carrier.biped) then 
+            alias capture_is_allowed = global.number[3]
+            alias carrier_team_flag  = global.object[1]
+            
+            capture_is_allowed = 1
+            ui_alert.set_visibility(flag_carrier, false)
+
+            -- enforce Flag At Home
+            if opt_flag_at_home == 1 and opt_sides == sides.multi then 
+                carrier_team_flag = carrier_team.flag
+
+                if carrier_team_flag.state != flag_state.at_home then 
+                    capture_is_allowed = 0
+                    ui_alert.set_visibility(flag_carrier, true)
+                end
+            end
+
+            if capture_is_allowed == 1 then 
+                -- Balancer.
+                if flag_carrier.team == team[0] then
+                    team[0].time_since_last_capture.reset()
+                
+                altif flag_carrier.team == team[1] then 
+                    team[1].time_since_last_capture.reset()
+                end
+
+                flag_carrier.score += 1
+                flag_carrier.captures += 1
+                current_team.flag.delete()
+                send_incident(flag_scored, flag_carrier, all_players)
+
+                -- Lead to win
+                if opt_lead_to_win > 0 then
+                    alias lead_score = global.number[4]
+
+                    lead_score = team[0].score
+                    lead_score -= team[1].score
+
+                    if lead_score > 0 then
+                        if odd_round == 0 then
+                            game.show_message_to(all_players, none, "Red Team has a %n point lead!", lead_score)
+                        alt
+                            game.show_message_to(all_players, none, "Blue Team has a %n point lead!", lead_score)
+                        end
+
+                        if lead_score >= opt_lead_to_win then
+                            game.end_round()
+                        end
+                    end
+
+                    lead_score = team[1].score
+                    lead_score -= team[0].score
+
+                    if lead_score > 0 then
+                        if odd_round == 0 then
+                            game.show_message_to(all_players, none, "Blue Team has a %n point lead!", lead_score)
+                        alt
+                            game.show_message_to(all_players, none, "Red Team has a %n point lead!", lead_score)
+                        end
+
+                        if lead_score >= opt_lead_to_win then
+                            game.end_round()
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- flag was just dropped
+    if flag_carrier == no_player and current_flag.state == flag_state.carried then
+        alias flag_zone = global.object[1]
+
+        flag_zone = current_flag.zone 
+        current_flag.state = flag_state.dropped
+        flag_zone.set_progress_bar(object.recovery_timer, allies)
+        current_flag.set_waypoint_icon(flag)
+        current_flag.set_waypoint_visibility(everyone)
+        current_team.flag.set_waypoint_priority(high)
+    end
+--------------------------------------------------------------------------------
+-- FLAG DISPLACEMENT:
+-- measures how far from its base each flag is, smoothed with EMA.
+--------------------------------------------------------------------------------
+    if opt_balance_ratio == 1 then
+        if current_flag != no_object then
+            current_flag.displacement_update_interval.set_rate(-100%)
+    
+            if current_flag.displacement_update_interval.is_zero() then
+                alias sample = allocate temporary number
+                sample = current_flag.get_distance_to(current_team.flag_point)
+                sample *= 100
+                sample /= FLAG_DISPLACEMENT_NORMALIZER
+    
+                if sample > 100 then
+                    sample = 100
+                end
+    
+                alias diff = allocate temporary number
+                diff = sample
+                diff -= current_flag.flag_displacement_ema
+                diff /= DISPLACEMENT_EMA_WINDOW
+    
+                if diff == 0 then
+                    if sample > current_flag.flag_displacement_ema then
+                        diff = 1
+                    end
+                    if sample < current_flag.flag_displacement_ema then
+                        diff = -1
+                    end
+                end
+    
+                current_flag.flag_displacement_ema += diff
+    
+                current_flag.displacement_update_interval.reset()
+            end
+        end
+    end 
+end
+
+--------------------------------------------------------------------------------
+-- PROCESS FLAG RECOVERY:
+-- handle flag returns and resets.
+--------------------------------------------------------------------------------
+for each team do 
+    alias current_flag    = global.object[0]
+    alias flag_zone       = global.object[1]
+    alias returning_count = global.number[3]
+    
+    current_flag = current_team.flag
+    flag_zone = current_flag.zone
+
+    if  current_flag != no_object 
+        and current_flag.state == flag_state.dropped 
+        or current_flag.state == 3 
+    then 
+        if opt_auto_recover != 0 then
+            flag_zone.recovery_timer.set_rate(-100%)
+        alt
+            flag_zone.recovery_timer.set_rate(0%)
+        end
+        --
+        -- Identify players returning the flag:
+        --
+        returning_count = 0
+        for each player do
+            alias temp_object = global.object[0] -- temporarily repurpose current_flag
+            current_player.is_returning_flag = 0
+
+            if current_player.team == current_team and flag_zone.shape_contains(current_player.biped) then
+                temp_object = no_object
+                temp_object = current_player.get_vehicle()
+
+                if temp_object == no_object then
+                    current_player.is_returning_flag = 1
+                    returning_count += 1
+                    temp_object = no_object
+                    temp_object = current_player.get_weapon(primary)
+
+                    if temp_object != no_object and temp_object.is_of_type(flag) then
+                        returning_count += 2 -- flag carrier is equivalent to 3 players
+                    end
+                end
+            end
+        end
+
+        current_flag = current_team.flag -- restore current_flag
+
+        if returning_count > 0 then
+            if opt_auto_recover != 0 then
+                flag_zone.recovery_timer.set_rate(-125%)
+            alt
+                flag_zone.recovery_timer.set_rate(-100%)
+            end
+            if returning_count > 1 then
+                flag_zone.recovery_timer.set_rate(-150%)
+                if returning_count > 2 then
+                    flag_zone.recovery_timer.set_rate(-200%)
+                end
+            end
+
+            -- blink the flag's waypoint if it's being returned
+            current_flag.set_waypoint_priority(blink)
+        end
+
+        -- otherwise do not blink the flag's waypoint
+        if returning_count == 0 then
+            current_flag.set_waypoint_priority(high)
+        end
+
+        -- sync flag timer to zone timer for waypoint display
+        current_flag.recovery_timer = flag_zone.recovery_timer
+
+        -- only show waypoint timer after 1 second has passed
+        if current_flag.recovery_timer < opt_recovery_time then
+            current_flag.set_waypoint_timer(object.recovery_timer)
+        alt
+            current_flag.set_waypoint_timer(none)
+        end
+        --
+        -- Carry out resets and returns as appropriate:
+        --
+        if current_flag.is_out_of_bounds() then 
+            current_flag.delete()
+
+            if opt_sides == sides.neutral then
+                send_incident(flag_reset_neutral, current_flag.last_carrier, current_team)
+            alt
+                send_incident(flag_reset, current_team, current_team)
+            end
+        end
+
+        if flag_zone.recovery_timer.is_zero() then
+            current_flag.delete()
+
+            if opt_sides == sides.neutral then
+                send_incident(flag_reset_neutral, current_flag.last_carrier, current_team)
+            alt
+                if returning_count > 0 then
+                    send_incident(flag_recovered, current_team, current_team) -- carry out the return
+                alt
+                    send_incident(flag_reset, current_team, current_team) -- carry out the reset
+                end
+            end
+
+            -- credit players for returning flags
+            for each player do 
+                if current_player.is_returning_flag == 1 and current_player.team == current_team then 
+                    current_player.returns += 1
+                    current_player.is_returning_flag = 0
+                end
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- PROCESS FLAG NOTIFICATIONS:
+-- send incidents for the flag being taken or dropped.
+--------------------------------------------------------------------------------
+for each team do 
+    alias current_flag    = global.object[0]
+    alias current_carrier = global.player[1]
+    alias carrier_biped   = global.object[1]
+    
+    current_flag    = current_team.flag
+    carrier_biped   = current_flag.last_carrier.biped
+    current_carrier = current_flag.last_carrier
+    current_flag.notification_throttle.set_rate(-100%)
+
+    if current_flag.notification_throttle.is_zero() then 
+        if  current_flag.state == flag_state.dropped 
+            and current_flag.announced_flag_drop != 1 
+        then 
+            current_flag.announced_flag_drop = 1
+
+            if opt_sides == sides.neutral then 
+                send_incident(flag_dropped_neutral, current_flag.last_carrier, current_team)
+            alt
+                send_incident(flag_dropped, current_flag.last_carrier, current_team)
+            end
+
+            current_flag.notification_throttle.reset()
+        end
+
+        if  current_flag.state == flag_state.carried 
+            and current_flag.announced_flag_take != 1 
+        then 
+            current_flag.announced_flag_take = 1
+
+            if opt_sides == sides.neutral then 
+                send_incident(flag_grabbed_neutral, current_carrier, current_team)
+            alt
+                send_incident(flag_grabbed, current_carrier, current_team)
+            end
+
+            current_flag.notification_throttle.reset()
+        end
+
+        if current_flag.state != flag_state.carried then 
+            current_flag.announced_flag_take = 0
+        end
+
+        if  current_flag.state == flag_state.carried 
+            or current_flag.state == flag_state.at_home 
+        then 
+            current_flag.announced_flag_drop = 0
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- MANAGE CARRIER COOLDOWN:
+-- carrier cooldown traits.
+--------------------------------------------------------------------------------
+for each player do 
+    alias current_biped  = global.object[0]
+    alias current_weapon = global.object[1]
+    current_biped = current_player.biped
+
+    if not current_biped == no_object then 
+        current_weapon = no_object
+        current_weapon = current_player.get_weapon(primary)
+        
+        if  not current_weapon.is_of_type(flag) 
+            and current_player.carrier_cooldown_timer > 0 
+        then 
+            current_player.carrier_cooldown_timer.set_rate(-100%)
+
+            if not current_player.carrier_cooldown_timer.is_zero() then 
+                current_player.apply_traits(cooldown_traits)
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- HANDLE CARRIER DEATH:
+-- handle the carrier being killed.
+--------------------------------------------------------------------------------
+for each team do 
+    alias current_flag = global.object[0]
+    alias killer       = global.player[0]
+    
+    if current_team.has_any_players() then 
+        current_flag = current_team.flag
+
+        for each player do
+            if current_flag.last_carrier.killer_type_is(kill) then 
+                killer = current_flag.last_carrier.try_get_killer()
+                send_incident(flagcarrier_kill, killer, current_flag.last_carrier)
+                current_flag.last_carrier = no_player
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- INITIALIZE FLAG PROXIMITY ZONES:
+-- create a boundary for each flag.
+--------------------------------------------------------------------------------
+for each object with label all_flags do
+    alias flag_zone = global.object[0]
+
+    if current_object.zone == no_object then 
+        current_object.zone = current_object.place_at_me(hill_marker, none, never_garbage_collect | suppress_effect, 0, 0, 0, none)
+        flag_zone = current_object.zone
+        flag_zone.set_shape(cylinder, FLAG_ZONE_RADIUS, 10, 5)
+        flag_zone.set_shape_visibility(no_one)
+        flag_zone.attach_to(current_object, 0, 0, 0, relative)
+        flag_zone.team = current_object.team
+    end
+end
+
+--------------------------------------------------------------------------------
+-- UPDATE FLAG ZONE VISIBILITY:
+-- show boundary when flag is dropped and stationary.
+--------------------------------------------------------------------------------
+for each object with label all_flags do
+    alias current_flag = global.object[0]
+    alias flag_speed   = global.number[3]
+
+    current_flag = current_object
+    current_flag.zone.set_shape_visibility(no_one)
+    if current_flag.state == flag_state.dropped then
+        flag_speed = current_flag.get_speed()
+        if flag_speed == 0 then
+            current_flag.zone.set_shape_visibility(everyone)
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- PROCESS FLAG PRESERVATION:
+-- handle preserve boundaries (One Flag).
+--------------------------------------------------------------------------------
+for each object with label all_flags do 
+    alias current_flag = global.object[0]
+    alias flag_zone    = global.object[1]
+    
+    -- if opt_sides == sides.one then
+        current_flag = current_object
+        flag_zone = current_flag.zone
+
+        for each player do
+            if  current_player.team != current_flag.team
+                and current_flag.zone.shape_contains(current_player.biped) 
+            then 
+                -- any_flag_is_being_preserved = 1
+                current_flag.recovery_timer.set_rate(0%)
+                flag_zone.recovery_timer.set_rate(0%)
+            end
+        end
+    -- end
+end
+
+--------------------------------------------------------------------------------
+-- CLEANUP FLAG CARRIER REFERENCES:
+-- detect a flag being dropped (clear last_carrier when no longer carried).
+--------------------------------------------------------------------------------
+for each object with label all_flags do 
+    alias current_flag    = global.object[0]
+    alias current_carrier = global.player[1]
+    current_flag = current_object
+
+    if current_flag.last_carrier != no_player then 
+        for each player do
+            if current_player == current_flag.last_carrier then 
+                current_carrier = no_player
+                current_carrier = current_flag.get_carrier()
+
+                if current_carrier == no_player then 
+                    current_flag.last_carrier = no_player
+                end
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- UPDATE DYNAMIC SPAWN ZONES:
+-- manage CTF spawn zones.
+--------------------------------------------------------------------------------
+for each team do 
+    alias current_flag = global.object[0]
+    
+    if current_team.has_any_players() then 
+        current_flag = current_team.flag
+        
+        if not current_flag == no_object then 
+            for each object with label "ctf_res_zone" do
+                if current_object.team == current_team then 
+                    current_object.enable_spawn_zone(0)
+                    current_object.set_shape_visibility(no_one)
+                    current_object.set_invincibility(1)
+                    current_object.set_pickup_permissions(no_one)
+
+                    if current_flag.state == flag_state.at_home then 
+                        current_object.enable_spawn_zone(1)
+                    end
+                end
+            end
+
+            for each object with label "ctf_res_zone_away" do
+                if current_object.team == current_team then 
+                    current_object.enable_spawn_zone(0)
+                    current_object.set_shape_visibility(no_one)
+                    current_object.set_invincibility(1)
+                    current_object.set_pickup_permissions(no_one)
+                    
+                    if current_flag.state != flag_state.at_home then 
+                        current_object.enable_spawn_zone(1)
+                    end
+                end
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- CLEANUP EMPTY TEAM FLAGS:
+-- delete a team's flag if all of their players quit and their flag is at home.
+--------------------------------------------------------------------------------
+for each team do 
+    alias current_flag = global.object[0]
+    
+    if  current_team != neutral_team 
+        and not current_team.has_any_players() 
+        and current_team.flag != no_object 
+    then 
+        current_flag = current_team.flag
+
+        if current_flag.state == flag_state.at_home then 
+            current_team.flag.delete()
+            current_team.flag = no_object
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- MANAGE ROUND TERMINATION:
+-- manage round timer and sudden death.
+--------------------------------------------------------------------------------
+if not game.round_timer.is_zero() then 
+    game.grace_period_timer = 0
+end
+
+if game.round_time_limit > 0 then 
+    if not game.round_timer.is_zero() then 
+        announced_sudden_death = 0
+    end
+
+    if game.round_timer.is_zero() then 
+        if sudden_death_enabled == 1 then 
+            game.sudden_death_timer.set_rate(-100%)
+            game.grace_period_timer.reset()
+
+            if announced_sudden_death == 0 then 
+                send_incident(sudden_death, all_players, all_players)
+                announced_sudden_death = 1
+            end
+
+            if  game.sudden_death_time > 0 
+                and game.grace_period_timer > game.sudden_death_timer 
+            then 
+                game.grace_period_timer = game.sudden_death_timer
+            end
+        end
+
+        if sudden_death_enabled == 0 then 
+            game.grace_period_timer.set_rate(-100%)
+
+            if game.grace_period_timer.is_zero() then 
+                game.end_round()
+            end
+        end
+
+        if game.sudden_death_timer.is_zero() then 
+            game.end_round()
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- QOL FALCON:
+-- notify players when falcons have spawned.
+--------------------------------------------------------------------------------
+if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
+    for each object with label all_falcons do
+        alias c_falcon = current_object
+        if c_falcon.state == 0 then
+            c_falcon.state = 1
+
+            if c_falcon.spawn_sequence == map_areas.middle then
+                game.show_message_to(all_players, none, "Falcon spawned in Middle")
+            end
+                
+            if c_falcon.spawn_sequence == map_areas.valley then
+                game.show_message_to(all_players, none, "Falcon spawned in Valley")
+            end 
+
+            if c_falcon.spawn_sequence == map_areas.hangar then
+                game.show_message_to(all_players, none, "Falcon spawned in Hangar")  
+            end
+
+            if c_falcon.spawn_sequence == map_areas.sea_red then
+                if odd_round == 0 then
+                    game.show_message_to(all_players, none, "Falcon spawned in Sea Red")   
+                alt
+                    game.show_message_to(all_players, none, "Falcon spawned in Sea Blue")   
+                end
+            end
+
+            if c_falcon.spawn_sequence == map_areas.sea_blue then
+                if odd_round == 0 then
+                    game.show_message_to(all_players, none, "Falcon spawned in Sea Blue")   
+                alt
+                    game.show_message_to(all_players, none, "Falcon spawned in Sea Red")   
+                end
+            end
+
+            if c_falcon.spawn_sequence == map_areas.red_base then
+                if odd_round == 0 then
+                    game.show_message_to(all_players, none, "Falcon spawned in Red Base")   
+                alt
+                    game.show_message_to(all_players, none, "Falcon spawned in Blue Base")   
+                end
+            end
+
+            if c_falcon.spawn_sequence == map_areas.blue_base then
+                if odd_round == 0 then
+                    game.show_message_to(all_players, none, "Falcon spawned in Blue Base")   
+                alt
+                    game.show_message_to(all_players, none, "Falcon spawned in Red Base")   
+                end
+            end
+
+            if c_falcon.spawn_sequence == map_areas.centre_island then
+                game.show_message_to(all_players, none, "Falcon spawned on Island")
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- CUSTOM TELEPORTS:
+-- converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
+--------------------------------------------------------------------------------
+for each object with label "teleporter" do
+    alias c_teleport = allocate temporary object
+    c_teleport = current_object
+
+    -- If this teleport has a linked teleport.
+    if  c_teleport.linked_teleport != no_object
+        and c_teleport.linked_teleport.has_forge_label("teleporter")
+    then
+        -- Main logic
+        if c_teleport.is_of_type(hill_marker) then
+
+            -- Check if a mismatched flag is blocking this teleport.
+            alias flag_is_blocking = allocate temporary number
+            flag_is_blocking = 0
+
+            if c_teleport.team != neutral_team then
+                for each object with label all_flags do
+                    if  c_teleport.shape_contains(current_object)
+                        and current_object.team != c_teleport.team
+                    then
+                        flag_is_blocking = 1
+                    end
+                end
+            end
+
+            for each player do
+                alias c_player = current_player
+                alias c_biped = allocate temporary object
+                c_biped = c_player.biped
+
+                -- If a player has entered this custom teleport and it is not blocked.
+                if  c_teleport.shape_contains(c_biped)
+                    and c_biped.saved_teleport == no_object
+                    and flag_is_blocking == 0
+                then
+                    c_biped.attach_to(c_teleport.linked_teleport, 0, 0, 0, relative)
+                    c_biped.saved_teleport = c_teleport.linked_teleport
+                end
+
+                -- If this player has a saved teleport.
+                if  c_biped.saved_teleport != no_object
+                    and c_biped.saved_teleport == c_teleport.linked_teleport
+                then
+                    -- If this player is not inside the saved teleport's shape.
+                    if not c_biped.saved_teleport.shape_contains(c_biped) then
+                        c_biped.saved_teleport = no_object
+                        c_biped.delay = 0
+                    alt
+                        c_biped.delay += 1
+
+                        if c_biped.delay == 5 then
+                            c_biped.detach()
+                            c_biped.delay = 0
+                        end
+
+                        -- If the player picked up a mismatched flag mid-transit, send it back.
+                        alias c_weapon = allocate temporary object
+                        c_weapon = c_player.get_weapon(primary)
+
+                        if  c_weapon.is_of_type(flag)
+                            and c_teleport.team != c_weapon.team
+                            and c_teleport.team != neutral_team
+                        then
+                            c_weapon.attach_to(c_teleport, 0, 0, 0, relative)
+                            c_weapon.detach()
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- BLINKSHOT:
+-- players who destroy monitors labeled as "blinkshot" are teleported to their position.
+--------------------------------------------------------------------------------
+for each object with label "blink_spawn" do
+    alias blink_spawn = current_object
+
+    if blink_spawn.blinkshot == no_object then
+        blink_spawn.blinkshot = blink_spawn.place_at_me(monitor, "blinkshot", none, 0, 0, 0, none)
+        blink_spawn.blinkshot.set_scale(150)
+        blink_spawn.blinkshot.set_waypoint_priority(low)
+        blink_spawn.blinkshot.set_waypoint_visibility(everyone)
+        blink_spawn.blinkshot.set_waypoint_range(0, 100)
+    end
+end
+
+for each object with label "blinkshot" do
+    alias blinkshot = current_object
+    blinkshot.shields = 0
+    blinkshot.health = 1
+end
+
+for each player do
+    alias c_player = current_player
+    alias killed_blink = allocate global.object
+    killed_blink = c_player.blinkshot
+
+    if killed_blink != no_object and killed_blink.has_forge_label("blinkshot") then
+        alias c_weapon = allocate global.object
+        c_weapon = c_player.get_weapon(primary)
+
+        if c_weapon.is_of_type(flag) then
+            killed_blink.delete()
+        end
+
+        c_player.biped.attach_to(killed_blink, 0, 0, 0, relative)
+        c_player.biped.shields = 0
+
+        killed_blink.delay += 1
+        if killed_blink.delay >= 40 then
+            c_player.biped.detach()
+            killed_blink.delete()
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- SPECIAL WEAPON TRAITS:
+-- apply limited traits to players holding certain weapons.
+--------------------------------------------------------------------------------
+if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
+    for each player do
+        if current_player.biped != no_object then
+            alias c_weapon = allocate temporary object
+            c_weapon = current_player.get_weapon(primary)
+
+            if  c_weapon.is_of_type(sniper_rifle)
+                or c_weapon.is_of_type(spartan_laser)
+                or c_weapon.is_of_type(focus_rifle)
+            then
+                current_player.apply_traits(special_weapon_traits)
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- FALCON DETECTION:
+-- allows players to know if there's falcons on teleports before using them.
+--------------------------------------------------------------------------------
+if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
+    for each player do
+        alias c_vehicle = allocate temporary object
+        c_vehicle = current_player.get_vehicle()
+
+        if c_vehicle != no_object and c_vehicle.state == 1 then
+            c_vehicle.state = 2
+        end
+    end
+
+    for each object with label "teleporter" do
+        alias c_teleport = allocate temporary object
+        c_teleport = current_object
+
+        if  not c_teleport.is_of_type(hill_marker)
+            and not c_teleport.is_of_type(capture_plate)
+            and c_teleport.spawn_sequence > 0
+        then
+            alias has_falcon_match = allocate temporary number
+            has_falcon_match = 0
+
+            alias falcon_count = allocate temporary number
+            falcon_count = 0
+
+            for each object with label all_falcons do
+                alias c_falcon = allocate temporary object
+                c_falcon = current_object
+
+                if c_falcon.spawn_sequence == c_teleport.spawn_sequence then
+                    has_falcon_match = 1
+
+                    alias c_health = allocate temporary number
+                    c_health = c_falcon.health
+
+                    if c_health > 0 and c_falcon.state == 1 then
+                        falcon_count += 1
+                    end
+                end
+            end
+
+            if has_falcon_match == 1 then -- do not give waypoints to teleporters without corresponding falcons
+                if falcon_count <= 0 then
+                    c_teleport.set_waypoint_icon(dead_teammate_marker)
+                    c_teleport.set_waypoint_priority(low)
+                altif falcon_count >= 9 then
+                    c_teleport.set_waypoint_icon(territory_a, 9)
+                    c_teleport.set_waypoint_priority(normal)
+                alt
+                    c_teleport.set_waypoint_icon(territory_a, falcon_count)
+                    c_teleport.set_waypoint_priority(normal)
+                end
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- PUSH TELEPORTS:
+-- systems that prevents reciever teleports from being blocked by falcons.
+--------------------------------------------------------------------------------
+for each object with label "push_receiver" do
+    current_object.is_blocked = 0
+end
+
+for each object with label all_falcons do
+    alias c_falcon = allocate global.object
+    c_falcon = current_object
+
+    if c_falcon.is_prepared == 0 then
+        c_falcon.is_prepared = 1
+
+        c_falcon.grace_timer.set_rate(0%)
+        c_falcon.grace_timer = 0
+        c_falcon.is_banned = 0
+    end
+
+    alias is_blocking = allocate temporary number
+    is_blocking = 0
+
+    for each object with label "push_receiver" do
+        alias c_receiver = current_object
+
+        if c_receiver.shape_contains(c_falcon) then
+            c_falcon.grace_timer.set_rate(100%)
+            c_receiver.is_blocked = 1
+            is_blocking = 1
+
+            if c_falcon.grace_timer >= 15 or c_falcon.is_banned == 1 then
+                c_falcon.apply_upward_impulse()
+                c_falcon.is_banned = 1
+            end
+        end
+    end
+
+    if is_blocking == 0 then
+        c_falcon.grace_timer.set_rate(0%)
+        c_falcon.grace_timer = 0
+    end
+end
+
+-- Visual feedback
+for each object with label "push_receiver" do
+    alias c_receiver = current_object
+
+    if c_receiver.is_blocked == 1 then
+        c_receiver.set_shape_visibility(everyone)
+        c_receiver.set_waypoint_priority(blink)
+        c_receiver.set_waypoint_visibility(everyone)
+
+    altif c_receiver.is_blocked == 0 then
+        c_receiver.set_shape_visibility(no_one)
+        c_receiver.set_waypoint_priority(normal)
+        c_receiver.set_waypoint_visibility(no_one)
+    end
+end
+
+--------------------------------------------------------------------------------
+-- PREVENT FLAG GRIEFING:
+-- resets flag if flag should be at home but is away.
+--------------------------------------------------------------------------------
+for each team do
+    alias current_flag = allocate temporary object
+    current_flag = current_team.flag
+
+    if  current_flag != no_object
+        and current_flag.state == flag_state.at_home
+    then
+        if not current_team.flag_point.shape_contains(current_flag) then
+            current_flag.delete()
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- HOLOGRAM & ARMOR LOCK TRAITS:
+-- applies traits when armor lock is equipped, and when hologram is in use.
+--------------------------------------------------------------------------------
+for each player do
+    alias aa = allocate temporary object
+    aa = current_player.get_armor_ability()
+    
+    if aa.is_of_type(hologram) and aa.is_in_use() then
+        if current_player.hologram_biped == no_object then
+            for each object do
+                alias dist = allocate temporary number
+                alias shields = allocate temporary number
+                dist = current_object.get_distance_to(aa)
+                shields = current_object.shields
+                if  dist < 3
+                    and not current_object.is_of_type(spartan)
+                    and not current_object.is_of_type(elite)
+                    and shields > 97
+                then
+                    current_player.hologram_biped = current_object
+                end
+            end
+        end
+    end
+
+    if aa != no_object and aa.is_of_type(armor_lock) then
+        current_player.apply_traits(armor_lock_traits)
+    end
+    
+    if current_player.hologram_biped != no_object then
+        current_player.apply_traits(hologram_traits)
+    end
+end
+
+--------------------------------------------------------------------------------
+-- FLAG CARRIER INVULNERABILITY:
+-- applies traits when flag is grabbed for a very short period of time.
+--------------------------------------------------------------------------------
+if opt_invulnerable_ticks != 0 then
+    for each player do
+        alias c_player = current_player
+    
+        alias c_weapon = allocate temporary object
+        c_weapon = c_player.get_weapon(primary)
+    
+        if c_weapon != no_object and c_weapon.is_of_type(flag) then
+            c_player.invincible_ticks += 1
+    
+            if c_player.invincible_ticks <= opt_invulnerable_ticks then
+                c_player.biped.set_invincibility(1)
+    
+            altif c_player.invincible_ticks > opt_invulnerable_ticks then
+                c_player.biped.set_invincibility(0)            
+            end
+    
+        altif not c_weapon.is_of_type(flag) then
+            c_player.biped.set_invincibility(0)
+            c_player.invincible_ticks = 0
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- WEAPON TRAITS:
+-- energy sword, rocket launcher and fuel rod.
+--------------------------------------------------------------------------------
+if opt_normal_gravity_traits == 1 then
+    for each player do
+        alias c_player = current_player
+    
+        alias c_weapon = allocate temporary object
+        c_weapon = c_player.get_weapon(primary)
+    
+        alias c_ability = allocate temporary object
+        c_ability = c_player.get_armor_ability()
+    
+        if c_weapon.is_of_type(energy_sword) then
+            c_player.apply_traits(normal_gravity_traits)    
+    
+        altif c_weapon.is_of_type(rocket_launcher) 
+        and not c_ability.is_of_type(jetpack) then
+            c_player.apply_traits(normal_gravity_traits)
+    
+        altif c_weapon.is_of_type(fuel_rod_gun) 
+        and not c_ability.is_of_type(jetpack) then
+            c_player.apply_traits(normal_gravity_traits)
+    
+        altif c_weapon.is_of_type(detached_machine_gun_turret) 
+        or c_weapon.is_of_type(detached_plasma_cannon) then
+            c_player.apply_traits(low_gravity_traits)
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- BALANCE CASCADE (THROTTLED):
+-- rating avg / differentials / advantage score / performance / ratio / state
+-- machine all depend on each other, but none of their inputs change faster
+-- than a few times per second (flag displacement is already sampled at
+-- 1/sec, rating and push_efficiency only change on kill events, score only
+-- changes on captures). Recalculating this at 60 ticks/sec was pure wasted
+-- work. It is all grouped under a single throttle, following the same
+-- pattern already used by FLAG DISPLACEMENT with its own timer.
+--------------------------------------------------------------------------------
+if opt_balance_ratio == 1 then
+    team[0].balance_update_interval.set_rate(-100%)
+    
+    if team[0].balance_update_interval.is_zero() then
+    
+    --------------------------------------------------------------------------------
+    -- TEAM RATING AVERAGE:
+    -- calculates the team rating average
+    --------------------------------------------------------------------------------
+        for each team do
+            alias c_team = current_team
+            c_team.player_count = 0
+            c_team.rating = 0
+            c_team.rating_avg = 0
+    
+            for each player do
+                alias c_player = current_player
+    
+                if c_player.team == c_team then    
+                    c_team.player_count += 1
+                    c_team.rating += c_player.rating
+                end
+            end
+    
+            if c_team.player_count > 0 then
+                c_team.rating_avg = c_team.rating
+                c_team.rating_avg /= c_team.player_count
+            end
+        end
+    
+        do
+    --------------------------------------------------------------------------------
+    -- RATING / DISPLACEMENT / SCORE / ENGAGEMENT DIFFERENTIALS:
+    -- all temporaries, they only feed advantage_score within this same cycle.
+    --------------------------------------------------------------------------------
+            alias diff_rating = allocate temporary number
+            alias diff_displacement = allocate temporary number
+            alias diff_score = allocate temporary number
+            alias diff_engagement = allocate temporary number
+    
+            alias raw_diff = allocate temporary number
+            alias total    = allocate temporary number
+    
+            raw_diff = team[0].rating_avg
+            raw_diff -= team[1].rating_avg
+            total = team[0].rating_avg
+            total += team[1].rating_avg
+            total += 1
+            raw_diff *= 100
+            diff_rating = raw_diff
+            diff_rating /= total
+    
+            if team[0].flag != no_object and team[1].flag != no_object then
+                alias temp_flag = allocate temporary object
+                temp_flag = team[1].flag
+                diff_displacement = temp_flag.flag_displacement_ema
+                temp_flag = team[0].flag
+                diff_displacement -= temp_flag.flag_displacement_ema
+            end
+    
+            raw_diff = team[0].score
+            raw_diff -= team[1].score
+            raw_diff *= 100
+            if game.score_to_win > 0 then
+                diff_score = raw_diff
+                diff_score /= game.score_to_win
+            alt
+                diff_score = 0
+            end
+            if diff_score > 100 then
+                diff_score = 100
+            end
+            if diff_score < -100 then
+                diff_score = -100
+            end
+    
+            diff_engagement = team[0].push_efficiency_ema
+            diff_engagement -= team[1].push_efficiency_ema
+    
+    --------------------------------------------------------------------------------
+    -- ADVANTAGE SCORE:
+    -- weighted sum, smoothed with EMA so it doesn't react to instantaneous spikes.
+    --------------------------------------------------------------------------------
+            alias weighted = allocate temporary number
+            alias raw_advantage = allocate temporary number
+    
+            weighted = diff_rating
+            weighted *= WEIGHT_RATING
+            raw_advantage = weighted
+    
+            weighted = diff_displacement
+            weighted *= WEIGHT_DISPLACEMENT
+            raw_advantage += weighted
+    
+            weighted = diff_score
+            weighted *= WEIGHT_SCORE
+            raw_advantage += weighted
+    
+            weighted = diff_engagement
+            weighted *= WEIGHT_ENGAGEMENT
+            raw_advantage += weighted
+    
+            raw_advantage /= 100
+    
+            alias temp = allocate temporary number
+            temp = team[0].advantage_score
+            temp /= ADVANTAGE_EMA_WINDOW
+            team[0].advantage_score -= temp
+    
+            temp = raw_advantage
+            temp /= ADVANTAGE_EMA_WINDOW
+            team[0].advantage_score += temp
+        end
+    
+    --------------------------------------------------------------------------------
+    -- PLAYER PERFORMANCE:
+    -- 0-100, combines individual rating and engagement with the same weights
+    -- used by the team balance ratio (WEIGHT_RATING / WEIGHT_ENGAGEMENT).
+    -- perf_divisor is constant (WEIGHT_RATING + WEIGHT_ENGAGEMENT never change
+    -- at runtime), so PERF_DIVISOR is now used directly instead of summing it
+    -- for every player.
+    --------------------------------------------------------------------------------
+        for each player do
+            alias c_player = current_player
+    
+            alias rating_norm = allocate temporary number
+            rating_norm = c_player.rating
+            rating_norm /= 20
+    
+            if rating_norm > 100 then
+                rating_norm = 100
+            end
+            if rating_norm < 0 then
+                rating_norm = 0
+            end
+    
+            alias weighted = allocate temporary number
+            alias raw_perf = allocate temporary number
+    
+            weighted = rating_norm
+            weighted *= WEIGHT_RATING
+            raw_perf = weighted
+    
+            weighted = c_player.engagement_ema
+            weighted *= WEIGHT_ENGAGEMENT
+            raw_perf += weighted
+    
+            c_player.performance = raw_perf
+            c_player.performance /= PERF_DIVISOR
+        end
+    
+    --------------------------------------------------------------------------------
+    -- BALANCE RATIO:
+    -- converts advantage_score (-100..100) into a percentage Red/Blue split that adds up to 100.
+    --------------------------------------------------------------------------------
+        do
+            alias half = allocate temporary number
+            half = team[0].advantage_score
+            half /= 2
+    
+            team[0].balance_ratio_red = 50
+            team[0].balance_ratio_red += half
+    
+            if team[0].balance_ratio_red > 100 then
+                team[0].balance_ratio_red = 100
+            end
+            if team[0].balance_ratio_red < 0 then
+                team[0].balance_ratio_red = 0
+            end
+    
+            team[0].balance_ratio_blue = 100
+            team[0].balance_ratio_blue -= team[0].balance_ratio_red
+        end
+    
+    --------------------------------------------------------------------------------
+    -- BALANCE STATE MACHINE:
+    -- hysteresis to decide when to activate/deactivate the imbalance alert.
+    -- The negative thresholds are now precalculated constants
+    -- (BALANCE_THRESHOLD_ENTER_NEG / _EXIT_NEG) instead of per-cycle temporaries.
+    --------------------------------------------------------------------------------
+        do
+            alias state = team[0].imbalance_state
+            alias score = team[0].advantage_score
+    
+            if score < BALANCE_THRESHOLD_ENTER_NEG and state != balance_state.blue_advantage then
+                state = balance_state.blue_advantage
+                team[0].balance_reminder_timer = 0
+    
+            altif score > BALANCE_THRESHOLD_ENTER and state != balance_state.red_advantage then
+                state = balance_state.red_advantage
+                team[0].balance_reminder_timer = 0
+    
+            altif state == balance_state.red_advantage and score < BALANCE_THRESHOLD_EXIT then
+                state = balance_state.balanced
+    
+            altif state == balance_state.blue_advantage and score > BALANCE_THRESHOLD_EXIT_NEG then
+                state = balance_state.balanced
+            end
+        end
+    
+        team[0].balance_update_interval.reset()
+    end
+    
+    --------------------------------------------------------------------------------
+    -- BALANCE RATIO & TEAM ADVANTAGE ALERTS:
+    -- it notifies you while the imbalance persists. balance_reminder_timer.set_rate
+    -- was moved outside the player loop: it is a team-level value (team[0]), not
+    -- a per-player one, so calling it once per player was N times redundant
+    -- work. The ratio's set_text now only fires when the displayed value has
+    -- actually changed (at most, at the frequency of the throttle above),
+    -- instead of 60 times per second per player.
+    --------------------------------------------------------------------------------
+    do
+        alias ratio_changed = allocate temporary number
+        ratio_changed = 0
+    
+        if team[0].balance_ratio_red != balance_ratio_red_shown then
+            ratio_changed = 1
+            balance_ratio_red_shown = team[0].balance_ratio_red
+        end
+        if team[0].balance_ratio_blue != balance_ratio_blue_shown then
+            ratio_changed = 1
+            balance_ratio_blue_shown = team[0].balance_ratio_blue
+        end
+    
+        if team[0].imbalance_state != balance_state.balanced then
+            team[0].balance_reminder_timer.set_rate(-100%)
+        end
+    
+        for each player do
+            alias c_player = current_player
+    
+            if c_player.ticks_without_moving <= 600 then
+                ui_balance_ratio.set_visibility(c_player, false)
+            
+            altif c_player.ticks_without_moving > 600 then
+                ui_balance_ratio.set_visibility(c_player, true)
+            end
+    
+            if ratio_changed == 1 then
+                ui_balance_ratio.set_text("Balance ratio - Red: %n\% Blue: %n\%", team[0].balance_ratio_red, team[0].balance_ratio_blue)
+            end
+    
+            if opt_show_advantage_message == 1 then
+                if team[0].imbalance_state != balance_state.balanced then
+                    ui_team_advantage.set_visibility(c_player, true)
+        
+                    if team[0].balance_reminder_timer.is_zero() then
+                        if team[0].imbalance_state == balance_state.red_advantage then
+                            if odd_round == 0 then
+                                ui_team_advantage.set_text("Red Team has a significant advantage.")
+                            alt
+                                ui_team_advantage.set_text("Blue Team has a significant advantage.")
+                            end
+                        end
+        
+                        if team[0].imbalance_state == balance_state.blue_advantage then
+                            if odd_round == 0 then
+                                ui_team_advantage.set_text("Blue Team has a significant advantage.")
+                            alt
+                                ui_team_advantage.set_text("Red Team has a significant advantage.")
+                            end
+                        end
+                    end
+        
+                altif team[0].imbalance_state == balance_state.balanced then
+                    ui_team_advantage.set_visibility(c_player, false)
+                end
+            end
+        end
+    
+        if team[0].imbalance_state != balance_state.balanced then
+            if team[0].balance_reminder_timer.is_zero() then
+                team[0].balance_reminder_timer.reset()
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- MVP ALERT:
+-- system that shows in the event-feed who the best performing player is.
+--------------------------------------------------------------------------------
+for each player do
+    alias c_player = current_player
+
+    if mvp == no_player then
+        mvp = c_player
+    end
+
+    if opt_balance_ratio == 1 then
+        if c_player.performance > mvp.performance and c_player != mvp then
+            game.show_message_to(all_players, none, "%n is the current MVP! (%n/100)", c_player, c_player.performance)
+            mvp = c_player
+        end
+
+    altif opt_balance_ratio == 0 then
+        if c_player.rating > mvp.rating and c_player != mvp then
+            game.show_message_to(all_players, none, "%n is the current MVP! (%n)", c_player, c_player.rating)
+            mvp = c_player
+        end        
+    end
+end
+
+--------------------------------------------------------------------------------
+-- FALCON FLAG CARRIER ALERT:
+-- ui alert that warns falcon users that flag carrier cannot use the falcon seats.
+--------------------------------------------------------------------------------
+for each player do
+    alias c_player = current_player
+
+    ui_falcon_alert.set_visibility(c_player, false)
+    
+    alias c_vehicle = allocate temporary object
+    c_vehicle = c_player.get_vehicle()
+
+    if c_vehicle != no_object and c_vehicle.is_of_type(falcon) then
+        for each object with label all_flags do
+            alias c_flag = current_object
+
+            alias c_distance = allocate temporary number
+            c_distance = 1000
+
+            c_distance = c_vehicle.get_distance_to(c_flag)
+
+            if c_distance <= 50 and c_flag.team != c_player.team then
+                ui_falcon_alert.set_visibility(c_player, true)
+                ui_falcon_alert.set_text("Flag carriers cannot use falcon seats!")
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- FALCON DESPAWNING:
+-- detects pusher falcons, to despawn them faster.
+--------------------------------------------------------------------------------
+if opt_falcon_despawning != 0 then
+    for each player do
+        alias c_player = current_player
+
+        if c_player.biped != no_object and c_player.role == player_role.pusher then
+            alias c_vehicle = allocate temporary object
+            c_vehicle = c_player.get_vehicle()
+
+            if c_vehicle != no_object and c_vehicle.is_of_type(falcon) then
+                c_vehicle.is_pusher = 1
+            end
+        end
+    end
+
+    for each object with label all_falcons do
+        alias c_falcon = current_object
+
+        if c_falcon.is_pusher == 1 then
+            c_falcon.falcon_idle_timer.set_rate(-100%)
+
+            alias speed = allocate temporary number
+            speed = c_falcon.get_speed()
+
+            if speed > 5 then
+                c_falcon.falcon_idle_timer = opt_falcon_despawning
+            end
+
+            for each player do
+                alias c_player = current_player
+
+                alias c_vehicle = allocate temporary object
+                c_vehicle = c_player.get_vehicle()
+
+                if c_vehicle != no_object and c_vehicle.is_of_type(falcon) then
+                    if c_falcon == c_vehicle then
+                        c_falcon.falcon_idle_timer = opt_falcon_despawning
+                    end
+                end
+            end
+
+            if c_falcon.falcon_idle_timer.is_zero() then
+                c_falcon.delete()
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- BETRAYERS:
+-- system that penalizes players who have committed more than a certain number of betrayals.
+-- Note: keep this at the bottom, since the last trait executed at every tick has priority.
+--------------------------------------------------------------------------------
+if opt_betrayer_traits == 1 then
+    for each player do
+        alias c_player = current_player
+
+        -- If the current player was killed by a teammate
+        if c_player.killer_type_is(betrayal) then 
+            alias c_betrayer = allocate temporary player
+
+            -- Save the betrayer on a global player
+            c_betrayer = c_player.try_get_killer()
+
+            if c_player.betrayals < 3 then 
+                -- Increase the betrayals of the betrayer
+                c_betrayer.betrayals += 1
+
+                -- If the betrayer betrayals is less than 4
+                if c_betrayer.betrayals < 4 then 
+                    game.show_message_to(all_players, none, "Betrayal will be punished, %n!", c_betrayer)
+                end
+
+                if c_betrayer.betrayals >= 4 then 
+                    -- Warn all the players
+                    game.show_message_to(all_players, none, "%n has been punished for betrayal!", c_betrayer)
+                end
+            end
+        end
+
+        if c_player.betrayals >= 4 then 
+            -- Apply the punishment
+            c_player.apply_traits(betrayer_traits)
+
+            c_player.biped.remove_weapon(primary, true)
+            c_player.biped.remove_weapon(secondary, true)
+            
+            c_player.frag_grenades = 0
+            c_player.plasma_grenades = 0
+
+            c_player.biped.set_waypoint_icon(skull)
+            c_player.biped.set_waypoint_visibility(everyone)
+        end
+    end
+end
+
+on object death: do
+    if killer_player != no_player then
+        alias c_vehicle = allocate global.object
+        c_vehicle = killer_player.get_vehicle()
+
+        -- If the player didn't had a vehicle and the killed_object was a blinkshot.
+        if  c_vehicle == no_object then
+            --------------------------------------------------------------------
+            -- DEATH BLINKSHOT:
+            -- players who destroy monitors labeled as "blinkshot" are teleported to their position.
+            --------------------------------------------------------------------
+            if killed_object.has_forge_label("blinkshot") then
+                killer_player.blinkshot = killed_object.place_at_me(hill_marker, "blinkshot", none, 0, 0, 0, none)
+            end
+        end
+    end
+end 
