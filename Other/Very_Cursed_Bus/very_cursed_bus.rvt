@@ -4,6 +4,8 @@ alias RandomAttach   = allocate global.number
 alias TargetVehicle  = allocate global.object
 alias AttachmentRoot = allocate global.object
 
+-- a function that attaches AttachmentRoot to TargetVehicle
+-- with an offset depending on TargetVehicle's type.
 function attach_root_to_vehicle_point()
     if TargetVehicle.is_of_type(banshee) then
         AttachmentRoot.attach_to(TargetVehicle, 7, 0, 6, relative)
@@ -32,6 +34,9 @@ function attach_root_to_vehicle_point()
     end
 end
 
+-- on the first tick of a new vehicle's life,
+-- - attach a random attachment to it
+-- - mark it as processed so we don't process it again
 for each object do
     if current_object.is_of_type(ghost) or current_object.is_of_type(scorpion) or current_object.is_of_type(wraith) or current_object.is_of_type(banshee) or current_object.is_of_type(mongoose) or current_object.is_of_type(falcon) or current_object.is_of_type(revenant) or current_object.is_of_type(pickup_truck) or current_object.is_of_type(semi_truck) or current_object.is_of_type(electric_cart) or current_object.is_of_type(forklift) or current_object.is_of_type(oni_van) then
         if current_object.Processed == 0 then

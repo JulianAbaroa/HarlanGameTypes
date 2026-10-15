@@ -1,3 +1,6 @@
+
+-- in most cases, you should probably use very cursed bus, but this shows how to attach things to vehicles.
+
 alias Processed      = allocate object.number
 alias Attachment = allocate object.object
 -- allocate PersistentChild = allocate object.object
@@ -118,7 +121,7 @@ for each object with label 3 do
 		-- temp_turret.set_scale(200)
 		temp_stand.attach_to(this_ghost, 2, 0, 4, relative)
 		temp_stand.set_scale(1)
-		
+
 		current_object.Processed = 1
 	end
 end
@@ -150,7 +153,7 @@ for each object with label 4 do
 				temp_revenant.delete()
 			end
 		end
-		
+
 		current_object.Processed = 1
 	end
 end
@@ -173,7 +176,7 @@ for each object with label 5 do
 
 		current_object.Processed = 1
 	end
-	
+
 	for each player do
 		if current_object.Attachment.shape_contains(current_player.biped) then
 			current_player.apply_traits(script_traits[3]) -- protection
