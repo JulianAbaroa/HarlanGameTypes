@@ -60,7 +60,7 @@
 --------------------------------------------------------------------------------
 
 -- Constants:
-alias VERSION                       = 0     -- gt; gametype version
+alias VERSION                       = 1     -- gt; gametype version
 alias FLAG_ZONE_RADIUS              = 20    -- ctf; flag's shape radius
 alias FLAG_DISPLACEMENT_NORMALIZER  = 1000  -- gt; divisor used to convert a flag's raw distance from its base into a 0-100 displacement percentage
 alias DISPLACEMENT_EMA_WINDOW       = 8     -- gt; smoothing window (in samples) for flag_displacement_ema
@@ -1852,6 +1852,7 @@ if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
             if  c_weapon.is_of_type(sniper_rifle)
                 or c_weapon.is_of_type(spartan_laser)
                 or c_weapon.is_of_type(focus_rifle)
+                or c_weapon.is_of_type(target_locator)
             then
                 current_player.apply_traits(special_weapon_traits)
             end
