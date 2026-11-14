@@ -26,7 +26,8 @@
 -- CLEANUP FLAG CARRIER REFERENCES: detect a flag being dropped (clear last_carrier when no longer carried).
 -- UPDATE DYNAMIC SPAWN ZONES: manage CTF spawn zones.
 -- CLEANUP EMPTY TEAM FLAGS: delete a team's flag if all of their players quit and their flag is at home.
--- MANAGE ROUND TERMINATION: manage round timer and sudden death.
+-- ELAPSED CLOCK: a round time limit of 60 means no time limit; the round timer shows elapsed time instead.
+-- MANAGE ROUND TERMINATION: manage round timer and sudden death (skipped for the elapsed clock).
 --------------------------------------------------------------------------------
 -- QOL FALCON: notify players when falcons have spawned.
 -- CUSTOM TELEPORTS: converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
@@ -135,7 +136,7 @@ alias odd_round                     = global.number[5]  -- gt; whether the curre
 alias current_calculated_scale      = global.number[6]  -- gt; working value used by the scale system while computing an object's final size
 alias recursion_counter             = global.number[7]  -- gt; recursion depth counter for math_precision_calculator, used to stop infinite loops
 alias global_math_buffer            = global.number[8]  -- gt; scratch buffer used by math_precision_calculator for its secondary fractional calculation
--- alias ...                        = global.number[9]  -- gt; unused
+alias elapsed_seconds               = global.number[9]  -- gt; elapsed clock: whole seconds played this round; -1 = not started yet
 -- alias ...                        = global.number[10] -- gt; unused
 -- alias ...                        = global.number[11] -- gt; unused
 
@@ -174,7 +175,7 @@ alias mvp                           = global.player[2] -- gt; show who is the cu
 -- alias ...                        = global.team[6] -- gt; unused
 -- alias ...                        = global.team[7] -- gt; unused
 
--- alias ...                        = global.timer[0] -- gt; unused
+alias second_timer                  = global.timer[0] -- gt; elapsed clock: counts down one second at a time, adding a second to elapsed_seconds each time
 -- alias ...                        = global.timer[1] -- gt; unused
 -- alias ...                        = global.timer[2] -- gt; unused
 -- alias ...                        = global.timer[3] -- gt; unused
@@ -296,6 +297,7 @@ declare global.player[0]            with network priority local -- ctf; flag car
 declare global.player[1]            with network priority local -- ctf; flag carrier
 declare mvp                         with network priority low   -- gt; the current player with the highest rating/performance
 declare global.team[0]              with network priority local -- ctf; flag carrier team
+declare elapsed_seconds             with network priority low = -1 -- gt; elapsed clock: whole seconds played this round; -1 = not started yet (low so it survives host migration)
 
 declare player.announced_game_start         with network priority low   -- ctf; tracks whether the game start message/incident has been sent to this player
 declare player.is_returning_flag            with network priority low   -- ctf; whether this player is currently counted as returning their team's flag
@@ -1383,14 +1385,69 @@ for each team do
 end
 
 --------------------------------------------------------------------------------
+-- ELAPSED CLOCK:
+-- a round time limit of 60 means no time limit; the round timer shows elapsed time instead.
+--------------------------------------------------------------------------------
+if game.round_time_limit == 3600 then -- 60 minutes, read in seconds
+    -- start the clock once anyone has spawned
+    if elapsed_seconds < 0 then
+        for each player do
+            if current_player.biped != no_object then
+                elapsed_seconds = 0
+                second_timer    = 1
+            end
+        end
+    end
+
+    if elapsed_seconds >= 0 then
+        second_timer.set_rate(-100%)
+
+        if second_timer.is_zero() then
+            elapsed_seconds += 1
+            second_timer     = 1
+        end
+    end
+
+    alias shown_seconds = allocate temporary number
+    shown_seconds = elapsed_seconds
+
+    if elapsed_seconds < 0 then
+        shown_seconds = 0
+    end
+
+    -- skip engine time remaining warnings
+    if elapsed_seconds == 10 then
+        shown_seconds = 9
+    end
+    if elapsed_seconds == 30 then
+        shown_seconds = 29
+    end
+    if elapsed_seconds == 60 then
+        shown_seconds = 59
+    end
+    if elapsed_seconds == 300 then
+        shown_seconds = 299
+    end
+    if elapsed_seconds == 900 then
+        shown_seconds = 899
+    end
+    if elapsed_seconds == 1800 then
+        shown_seconds = 1799
+    end
+
+    game.round_timer.set_rate(0%)
+    game.round_timer = shown_seconds
+end
+
+--------------------------------------------------------------------------------
 -- MANAGE ROUND TERMINATION:
--- manage round timer and sudden death.
+-- manage round timer and sudden death (skipped for the elapsed clock).
 --------------------------------------------------------------------------------
 if not game.round_timer.is_zero() then 
     game.grace_period_timer = 0
 end
 
-if game.round_time_limit > 0 then 
+if game.round_time_limit > 0 and game.round_time_limit != 3600 then 
     if not game.round_timer.is_zero() then 
         announced_sudden_death = 0
     end
