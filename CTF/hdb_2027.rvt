@@ -866,39 +866,37 @@ for each player do
 -- PUSHERS & DEFENDERS ENGAGEMENT:
 -- it records who wins the matches between pushers and defenders.
 --------------------------------------------------------------------------------
-        if c_player.role == player_role.defender and c_player.killer_type_is(kill) then
+        if c_player.killer_type_is(kill) then
             alias killer = allocate temporary player
-            killer = c_player.try_get_killer()  
-    
-            if killer != no_player and killer.role == player_role.pusher then
-                alias temp = allocate temporary number
+            killer = c_player.try_get_killer()    
 
-                temp = killer.engagement_ema
-                temp /= ENGAGEMENT_EMA_WINDOW
-                killer.engagement_ema -= temp
-                temp = 100
-                temp /= ENGAGEMENT_EMA_WINDOW
-                killer.engagement_ema += temp
-
-                temp = c_player.engagement_ema
-                temp /= ENGAGEMENT_EMA_WINDOW
-                c_player.engagement_ema -= temp
-
-            -- TODO this branch is unreachable
-            altif c_player.role == player_role.pusher and c_player.killer_type_is(kill) then
-                alias killer = allocate temporary player
-                killer = c_player.try_get_killer()            
-    
-                if killer != no_player and killer.role == player_role.defender then
+            if killer != no_player then
+                -- If a defender was killed by a pusher.
+                if c_player.role == player_role.defender and killer.role == player_role.pusher then
                     alias temp = allocate temporary number
-
+    
                     temp = killer.engagement_ema
                     temp /= ENGAGEMENT_EMA_WINDOW
                     killer.engagement_ema -= temp
                     temp = 100
                     temp /= ENGAGEMENT_EMA_WINDOW
                     killer.engagement_ema += temp
-
+                    
+                    temp = c_player.engagement_ema
+                    temp /= ENGAGEMENT_EMA_WINDOW
+                    c_player.engagement_ema -= temp
+    
+                -- If a pusher was killed by a defender.
+                altif c_player.role == player_role.pusher and killer.role == player_role.defender then
+                    alias temp = allocate temporary number
+    
+                    temp = killer.engagement_ema
+                    temp /= ENGAGEMENT_EMA_WINDOW
+                    killer.engagement_ema -= temp
+                    temp = 100
+                    temp /= ENGAGEMENT_EMA_WINDOW
+                    killer.engagement_ema += temp
+    
                     temp = c_player.engagement_ema
                     temp /= ENGAGEMENT_EMA_WINDOW
                     c_player.engagement_ema -= temp
