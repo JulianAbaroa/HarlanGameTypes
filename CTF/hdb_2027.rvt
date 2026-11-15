@@ -1,6 +1,6 @@
 -- Harlan Desert Bus 2027 by PlaceHolder021 & realArtVandelay
 --------------------------------------------------------------------------------
--- HARLAN VERSION: detect harlan_version object for compatibility checks (on red team, it also marks a Normal rules map unless overridden).
+-- HARLAN VERSION: detect harlan_version object for compatibility checks & map rules.
 -- ODD ROUND: determine if round is odd-numbered so team names can be switched.
 -- INIT CUSTOM TELEPORTS: converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
 -- QOL TELEPORTS: teleporter waypoints with helpful text.
@@ -139,7 +139,7 @@ alias current_calculated_scale      = global.number[6]  -- gt; working value use
 alias recursion_counter             = global.number[7]  -- gt; recursion depth counter for math_precision_calculator, used to stop infinite loops
 alias global_math_buffer            = global.number[8]  -- gt; scratch buffer used by math_precision_calculator for its secondary fractional calculation
 alias elapsed_seconds               = global.number[9]  -- gt; elapsed clock: whole seconds played this round; -1 = not started yet
--- alias ...                        = global.number[10] -- gt; unused
+alias score_to_win                  = global.number[10] -- gt; points to win this round (0 = unlimited)
 -- alias ...                        = global.number[11] -- gt; unused
 
 -- alias ...                        = global.object[0]  -- ctf; multi-purpose global object
@@ -299,6 +299,7 @@ declare global.player[0]            with network priority local -- ctf; flag car
 declare global.player[1]            with network priority local -- ctf; flag carrier
 declare mvp                         with network priority low   -- gt; the current player with the highest rating/performance
 declare global.team[0]              with network priority local -- ctf; flag carrier team
+declare score_to_win                with network priority low   -- gt; points to win this round
 declare elapsed_seconds             with network priority low = -1 -- gt; elapsed clock: whole seconds played this round; -1 = not started yet (low so it survives host migration)
 
 declare player.announced_game_start         with network priority low   -- ctf; tracks whether the game start message/incident has been sent to this player
@@ -340,11 +341,17 @@ end
 on init: do
     ----------------------------------------------------------------------------
     -- HARLAN VERSION:
-    -- detect harlan_version object for compatibility checks.
+    -- detect harlan_version object for compatibility checks & map rules.
     ----------------------------------------------------------------------------
     harlan_version = no_object
     for each object with label "harlan_version" do
         harlan_version = current_object
+    end
+
+    -- score to win for this round
+    score_to_win = opt_score_to_win
+    if opt_override_map_rules == 0 and harlan_version != no_object and harlan_version.team == team[0] then
+        score_to_win = NORMAL_SCORE_TO_WIN
     end
     
     ----------------------------------------------------------------------------
@@ -659,17 +666,11 @@ for each player do
     end
 
     if opt_sides == sides.neutral or opt_sides == sides.multi then
-        alias score_limit = allocate temporary number
-        score_limit = opt_score_to_win
-        if opt_override_map_rules == 0 and harlan_version != no_object and harlan_version.team == team[0] then
-            score_limit = NORMAL_SCORE_TO_WIN
-        end
-
-        if score_limit != 0 then
-            if opt_lead_to_win >= score_limit or opt_lead_to_win == 0 then
-                current_player.set_objective_text("Capture the flag.\r\n%n points to win.", score_limit)
+        if score_to_win != 0 then
+            if opt_lead_to_win >= score_to_win or opt_lead_to_win == 0 then
+                current_player.set_objective_text("Capture the flag.\r\n%n points to win.", score_to_win)
             alt -- Lead to win
-                current_player.set_objective_text("Capture the flag.\r\n%n point lead or %n points to win.", opt_lead_to_win, score_limit)
+                current_player.set_objective_text("Capture the flag.\r\n%n point lead or %n points to win.", opt_lead_to_win, score_to_win)
             end
         alt
             if opt_lead_to_win == 0 then
@@ -982,16 +983,10 @@ for each team do
                 current_team.flag.delete()
                 send_incident(flag_scored, flag_carrier, all_players)
 
-                -- Score to win (scripted, so Normal rules can use their own limit)
-                alias score_limit = allocate temporary number
-                score_limit = opt_score_to_win
-                if opt_override_map_rules == 0 and harlan_version != no_object and harlan_version.team == team[0] then
-                    score_limit = NORMAL_SCORE_TO_WIN
-                end
-
-                if  score_limit > 0
-                    and team[0].score >= score_limit
-                    or  team[1].score >= score_limit
+                -- Score to win
+                if  score_to_win > 0
+                    and team[0].score >= score_to_win
+                    or  team[1].score >= score_to_win
                 then
                     game.end_round()
                 end
