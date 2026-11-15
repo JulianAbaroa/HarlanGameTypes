@@ -1,6 +1,6 @@
 -- Harlan Desert Bus 2027 by PlaceHolder021 & realArtVandelay
 --------------------------------------------------------------------------------
--- HARLAN VERSION: detect harlan_version object for compatibility checks.
+-- HARLAN VERSION: detect harlan_version object for compatibility checks (on red team, it also marks a Normal rules map unless overridden).
 -- ODD ROUND: determine if round is odd-numbered so team names can be switched.
 -- INIT CUSTOM TELEPORTS: converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
 -- QOL TELEPORTS: teleporter waypoints with helpful text.
@@ -26,10 +26,9 @@
 -- CLEANUP FLAG CARRIER REFERENCES: detect a flag being dropped (clear last_carrier when no longer carried).
 -- UPDATE DYNAMIC SPAWN ZONES: manage CTF spawn zones.
 -- CLEANUP EMPTY TEAM FLAGS: delete a team's flag if all of their players quit and their flag is at home.
--- ELAPSED CLOCK: a round time limit of 60 means no time limit; the round timer shows elapsed time instead.
--- MANAGE ROUND TERMINATION: manage round timer and sudden death (skipped for the elapsed clock).
+-- ELAPSED CLOCK: Normal rules have no time limit; the round timer shows elapsed time instead.
+-- MANAGE ROUND TERMINATION: manage round timer and sudden death (not under Normal rules).
 --------------------------------------------------------------------------------
--- QOL FALCON: notify players when falcons have spawned.
 -- CUSTOM TELEPORTS: converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
 -- BLINKSHOT: players who destroy monitors labeled as "blinkshot" are teleported to their position.
 -- SPECIAL WEAPON TRAITS: apply limited traits to players holding certain weapons.
@@ -50,6 +49,7 @@
 -- Constants:
 alias VERSION                       = 0     -- gt; gametype version
 alias FLAG_ZONE_RADIUS              = 20    -- ctf; flag's shape radius
+alias NORMAL_SCORE_TO_WIN           = 5     -- gt; points to win under Normal rules, replacing opt_score_to_win
 alias WEIGHT_RATING                 = 35    -- gt; weight of the player's rating in player performance
 alias WEIGHT_ENGAGEMENT             = 30    -- gt; weight of the player's engagement in player performance
 alias ENGAGEMENT_EMA_WINDOW         = 10    -- gt; window in events (kills), not in time
@@ -98,15 +98,17 @@ enum player_role -- gt; role assigned to a player based on proximity to a flag (
 end
 
 -- Options:
-alias opt_lead_to_win           = script_option[0]  -- ctf; point lead required to end the round early (0 disables lead to win)
-alias opt_recovery_time         = script_option[1]  -- ctf; time to recover the flag
-alias opt_auto_recover          = script_option[2]  -- ctf; whether dropped flags recover automatically over time
-alias opt_sides                 = script_option[3]  -- ctf; see (sides) enum
-alias opt_flag_at_home          = script_option[4]  -- ctf; flag must be at home to capture
-alias opt_carrier_cooldown      = script_option[5]  -- ctf; flag carrier cooldown traits
-alias opt_betrayer_traits       = script_option[6]  -- gt; enables traits/punishment for repeat betrayers
-alias opt_invulnerable_ticks    = script_option[7]  -- gt; number of ticks a flag carrier is invincible for after grabbing the flag
-alias opt_falcon_despawning     = script_option[8]  -- gt; idle ticks before a pusher falcon is despawned (0 disables despawning)
+alias opt_override_map_rules    = script_option[0]  -- gt; 0 = No (harlan_version on red team = Normal rules), 1 = Yes (always use the gametype's own rules)
+alias opt_score_to_win          = script_option[1]  -- gt; points to win (0 = unlimited); replaces the built-in score to win, which must be set to unlimited
+alias opt_lead_to_win           = script_option[2]  -- ctf; point lead required to end the round early (0 disables lead to win)
+alias opt_recovery_time         = script_option[3]  -- ctf; time to recover the flag
+alias opt_auto_recover          = script_option[4]  -- ctf; whether dropped flags recover automatically over time
+alias opt_sides                 = script_option[5]  -- ctf; see (sides) enum
+alias opt_flag_at_home          = script_option[6]  -- ctf; flag must be at home to capture
+alias opt_carrier_cooldown      = script_option[7]  -- ctf; flag carrier cooldown traits
+alias opt_betrayer_traits       = script_option[8]  -- gt; enables traits/punishment for repeat betrayers
+alias opt_invulnerable_ticks    = script_option[9]  -- gt; number of ticks a flag carrier is invincible for after grabbing the flag
+alias opt_falcon_despawning     = script_option[10] -- gt; idle ticks before a pusher falcon is despawned (0 disables despawning)
 
 -- Traits:
 alias carrier_traits            = script_traits[0] -- ctf; applied while a player grabs the flag
@@ -444,7 +446,7 @@ on init: do
             c_teleport.set_waypoint_range(0, 20)
             
             if  harlan_version != no_object
-            and harlan_version.spawn_sequence < 1
+            and harlan_version.spawn_sequence < 2
             and show_text == 1
             then
                 if c_teleport.spawn_sequence == map_areas.middle then
@@ -540,7 +542,7 @@ on init: do
     -- SCALE SYSTEM:
     -- allows objects to be scaled in-game.
     ----------------------------------------------------------------------------
-    if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
+    if harlan_version != no_object and harlan_version.spawn_sequence < 2 then
         function math_precision_calculator()
             alias subject = current_object
 
@@ -656,19 +658,25 @@ for each player do
         current_player.set_objective_allegiance_icon(defend)
     end
 
-    if game.score_to_win != 0 and opt_sides == sides.neutral or opt_sides == sides.multi then
-        if opt_lead_to_win >= game.score_to_win or opt_lead_to_win == 0 then
-            current_player.set_objective_text("Capture the flag.\r\n%n points to win.", game.score_to_win)
-        alt -- Lead to win
-            current_player.set_objective_text("Capture the flag.\r\n%n point lead or %n points to win.", opt_lead_to_win, game.score_to_win)
+    if opt_sides == sides.neutral or opt_sides == sides.multi then
+        alias score_limit = allocate temporary number
+        score_limit = opt_score_to_win
+        if opt_override_map_rules == 0 and harlan_version != no_object and harlan_version.team == team[0] then
+            score_limit = NORMAL_SCORE_TO_WIN
         end
-    end
 
-    if game.score_to_win == 0 and opt_sides == sides.neutral or opt_sides == sides.multi then 
-        if opt_lead_to_win == 0 then
-            current_player.set_objective_text("Capture the flag.")
-        alt -- Lead to win
-            current_player.set_objective_text("Capture the flag.\r\n%n point lead to win.", opt_lead_to_win)
+        if score_limit != 0 then
+            if opt_lead_to_win >= score_limit or opt_lead_to_win == 0 then
+                current_player.set_objective_text("Capture the flag.\r\n%n points to win.", score_limit)
+            alt -- Lead to win
+                current_player.set_objective_text("Capture the flag.\r\n%n point lead or %n points to win.", opt_lead_to_win, score_limit)
+            end
+        alt
+            if opt_lead_to_win == 0 then
+                current_player.set_objective_text("Capture the flag.")
+            alt -- Lead to win
+                current_player.set_objective_text("Capture the flag.\r\n%n point lead to win.", opt_lead_to_win)
+            end
         end
     end
 end
@@ -691,9 +699,9 @@ for each player do
     if current_player.announced_game_start == 1 then
         if current_player.announce_start_timer.is_zero() then
             if harlan_version != no_object then
-                if harlan_version.spawn_sequence == 0 then
+                if harlan_version.spawn_sequence == 0 or harlan_version.spawn_sequence == 1 then
                     game.show_message_to(current_player, none, "Harlan Desert Bus")
-                altif harlan_version.spawn_sequence != 0 then
+                alt
                     game.show_message_to(current_player, none, "WARNING: Map expects newer version of this gametype")
                 end
             end
@@ -973,6 +981,20 @@ for each team do
                 flag_carrier.captures += 1
                 current_team.flag.delete()
                 send_incident(flag_scored, flag_carrier, all_players)
+
+                -- Score to win (scripted, so Normal rules can use their own limit)
+                alias score_limit = allocate temporary number
+                score_limit = opt_score_to_win
+                if opt_override_map_rules == 0 and harlan_version != no_object and harlan_version.team == team[0] then
+                    score_limit = NORMAL_SCORE_TO_WIN
+                end
+
+                if  score_limit > 0
+                    and team[0].score >= score_limit
+                    or  team[1].score >= score_limit
+                then
+                    game.end_round()
+                end
 
                 -- Lead to win
                 if opt_lead_to_win > 0 then
@@ -1386,9 +1408,9 @@ end
 
 --------------------------------------------------------------------------------
 -- ELAPSED CLOCK:
--- a round time limit of 60 means no time limit; the round timer shows elapsed time instead.
+-- Normal rules have no time limit; the round timer shows elapsed time instead.
 --------------------------------------------------------------------------------
-if game.round_time_limit == 3600 then -- 60 minutes, read in seconds
+if opt_override_map_rules == 0 and harlan_version != no_object and harlan_version.team == team[0] and game.round_time_limit > 0 then
     -- start the clock once anyone has spawned
     if elapsed_seconds < 0 then
         for each player do
@@ -1441,13 +1463,15 @@ end
 
 --------------------------------------------------------------------------------
 -- MANAGE ROUND TERMINATION:
--- manage round timer and sudden death (skipped for the elapsed clock).
+-- manage round timer and sudden death (not under Normal rules).
 --------------------------------------------------------------------------------
 if not game.round_timer.is_zero() then 
     game.grace_period_timer = 0
 end
 
-if game.round_time_limit > 0 and game.round_time_limit != 3600 then 
+if  game.round_time_limit > 0
+    and opt_override_map_rules == 1 or harlan_version == no_object or harlan_version.team != team[0]
+then 
     if not game.round_timer.is_zero() then 
         announced_sudden_death = 0
     end
@@ -1479,67 +1503,6 @@ if game.round_time_limit > 0 and game.round_time_limit != 3600 then
 
         if game.sudden_death_timer.is_zero() then 
             game.end_round()
-        end
-    end
-end
-
---------------------------------------------------------------------------------
--- QOL FALCON:
--- notify players when falcons have spawned.
---------------------------------------------------------------------------------
-if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
-    for each object with label all_falcons do
-        alias c_falcon = current_object
-        if c_falcon.state == 0 then
-            c_falcon.state = 1
-
-            if c_falcon.spawn_sequence == map_areas.middle then
-                game.show_message_to(all_players, none, "Falcon spawned in Middle")
-            end
-                
-            if c_falcon.spawn_sequence == map_areas.valley then
-                game.show_message_to(all_players, none, "Falcon spawned in Valley")
-            end 
-
-            if c_falcon.spawn_sequence == map_areas.hangar then
-                game.show_message_to(all_players, none, "Falcon spawned in Hangar")  
-            end
-
-            if c_falcon.spawn_sequence == map_areas.sea_red then
-                if odd_round == 0 then
-                    game.show_message_to(all_players, none, "Falcon spawned in Sea Red")   
-                alt
-                    game.show_message_to(all_players, none, "Falcon spawned in Sea Blue")   
-                end
-            end
-
-            if c_falcon.spawn_sequence == map_areas.sea_blue then
-                if odd_round == 0 then
-                    game.show_message_to(all_players, none, "Falcon spawned in Sea Blue")   
-                alt
-                    game.show_message_to(all_players, none, "Falcon spawned in Sea Red")   
-                end
-            end
-
-            if c_falcon.spawn_sequence == map_areas.red_base then
-                if odd_round == 0 then
-                    game.show_message_to(all_players, none, "Falcon spawned in Red Base")   
-                alt
-                    game.show_message_to(all_players, none, "Falcon spawned in Blue Base")   
-                end
-            end
-
-            if c_falcon.spawn_sequence == map_areas.blue_base then
-                if odd_round == 0 then
-                    game.show_message_to(all_players, none, "Falcon spawned in Blue Base")   
-                alt
-                    game.show_message_to(all_players, none, "Falcon spawned in Red Base")   
-                end
-            end
-
-            if c_falcon.spawn_sequence == map_areas.centre_island then
-                game.show_message_to(all_players, none, "Falcon spawned on Island")
-            end
         end
     end
 end
@@ -1671,7 +1634,7 @@ end
 -- SPECIAL WEAPON TRAITS:
 -- apply limited traits to players holding certain weapons.
 --------------------------------------------------------------------------------
-if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
+if harlan_version != no_object and harlan_version.spawn_sequence < 2 then
     for each player do
         if current_player.biped != no_object then
             alias c_weapon = allocate temporary object
@@ -1692,13 +1655,13 @@ end
 -- FALCON DETECTION:
 -- allows players to know if there's falcons on teleports before using them.
 --------------------------------------------------------------------------------
-if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
+if harlan_version != no_object and harlan_version.spawn_sequence < 2 then
     for each player do
         alias c_vehicle = allocate temporary object
         c_vehicle = current_player.get_vehicle()
 
-        if c_vehicle != no_object and c_vehicle.state == 1 then
-            c_vehicle.state = 2
+        if c_vehicle.is_of_type(falcon) and c_vehicle.state == 0 then
+            c_vehicle.state = 1 -- this falcon has been boarded since it spawned
         end
     end
 
@@ -1725,7 +1688,7 @@ if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
                     alias c_health = allocate temporary number
                     c_health = c_falcon.health
 
-                    if c_health > 0 and c_falcon.state == 1 then
+                    if c_health > 0 and c_falcon.state == 0 then -- alive and never boarded
                         falcon_count += 1
                     end
                 end
@@ -1734,7 +1697,7 @@ if harlan_version != no_object and harlan_version.spawn_sequence < 1 then
             if has_falcon_match == 1 then -- do not give waypoints to teleporters without corresponding falcons
                 if falcon_count <= 0 then
                     c_teleport.set_waypoint_icon(dead_teammate_marker)
-                    c_teleport.set_waypoint_priority(low)
+                    c_teleport.set_waypoint_priority(normal)
                 altif falcon_count >= 9 then
                     c_teleport.set_waypoint_icon(territory_a, 9)
                     c_teleport.set_waypoint_priority(normal)
