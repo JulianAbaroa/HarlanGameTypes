@@ -31,7 +31,9 @@
 --------------------------------------------------------------------------------
 -- CUSTOM TELEPORTS: converts hill_markers and capture_plates into functional teleports when using the "teleporter" label.
 -- BLINKSHOT: players who destroy monitors labeled as "blinkshot" are teleported to their position.
+-- EQUIP ZONES: objects labeled "equip_zone" swap your armor ability for a jetpack.
 -- SPECIAL WEAPON TRAITS: apply limited traits to players holding certain weapons.
+-- WEAK WEAPON TRAITS: apply buff traits to players holding one of the weakest weapons.
 -- FALCON DETECTION: allows players to know if there's falcons on teleports before using them.
 -- PUSH TELEPORTS: systems that prevents reciever teleports from being blocked by falcons.
 -- PREVENT FLAG GRIEFING: resets flag if flag should be at home but is away.
@@ -41,6 +43,8 @@
 -- MVP ALERT: system that shows in the event-feed who the best performing player is.
 -- FALCON FLAG CARRIER ALERT: ui alert that warns falcon users that flag carrier cannot use the falcon seats.
 -- FALCON DESPAWNING: detects pusher falcons, to despawn them faster.
+-- FLAG KILL HEAL: flag carriers who kill someone have their shields and health refilled.
+-- CUSTOM POWERUP: picking up a powerup labeled "powerup" applies powerup_traits until death.
 -- BETRAYERS: system that penalizes players who have committed more than a certain number of betrayals.
 --------------------------------------------------------------------------------
 -- DEATH BLINKSHOT: players who destroy monitors labeled as "blinkshot" are teleported to their position.
@@ -111,14 +115,18 @@ alias opt_carrier_cooldown      = script_option[7]  -- ctf; flag carrier cooldow
 alias opt_betrayer_traits       = script_option[8]  -- gt; enables traits/punishment for repeat betrayers
 alias opt_invulnerable_ticks    = script_option[9]  -- gt; number of ticks a flag carrier is invincible for after grabbing the flag
 alias opt_falcon_despawning     = script_option[10] -- gt; idle ticks before a pusher falcon is despawned (0 disables despawning)
+alias opt_flag_heal             = script_option[11] -- gt; flag carriers who kill someone have their shields and health refilled (0 = off, 1 = on)
+alias opt_weak_weapon_traits    = script_option[12] -- gt; applies weak_weapon_traits to players holding one of the weakest weapons (0 = off, 1 = on)
 
 -- Traits:
-alias carrier_traits            = script_traits[0] -- ctf; applied while a player grabs the flag
-alias cooldown_traits           = script_traits[1] -- ctf; applied for a limited period of time whenever a flag carrier throws the flag
-alias betrayer_traits           = script_traits[2] -- gt; applied when a player betrays N times
-alias special_weapon_traits     = script_traits[3] -- gt; applied whenever a player has equipped X weapon
-alias hologram_traits           = script_traits[4] -- gt; applied while a hologram exists
-alias armor_lock_traits         = script_traits[5] -- gt; applied while the player has equipped armor lock
+alias powerup_traits            = script_traits[0] -- gt; applied from picking up a powerup until death
+alias carrier_traits            = script_traits[1] -- ctf; applied while a player grabs the flag
+alias cooldown_traits           = script_traits[2] -- ctf; applied for a limited period of time whenever a flag carrier throws the flag
+alias betrayer_traits           = script_traits[3] -- gt; applied when a player betrays N times
+alias special_weapon_traits     = script_traits[4] -- gt; applied whenever a player has equipped X weapon
+alias hologram_traits           = script_traits[5] -- gt; applied while a hologram exists
+alias armor_lock_traits         = script_traits[6] -- gt; applied while the player has equipped armor lock
+alias weak_weapon_traits        = script_traits[7] -- gt; applied while the player's primary weapon is one of the weakest weapons
 
 -- Script widgets:
 alias ui_alert          = script_widget[0] -- ctf; shows a message about flag must be at home to capture
@@ -193,14 +201,14 @@ alias is_returning_flag             = player.number[1] -- ctf; whether this play
 alias betrayals                     = player.number[2] -- gt; number of betrayals committed by this player
 alias role                          = player.number[3] -- gt; this player's current role, see (player_role) enum
 alias invincible_ticks              = player.number[4] -- gt; ticks elapsed while carrying the flag under opt_invulnerable_ticks
--- alias ...                        = player.number[5] -- gt; unused
+alias powerup_distance              = player.number[5] -- gt; distance to the powerup tracked on this player this tick; -1 = none
 alias engagement_ema                = player.number[6] -- gt; smoothed win rate of this player's pusher/defender engagements
 alias performance                   = player.number[7] -- gt; 0-100 combined performance score used by the MVP system
 
 alias blinkshot                     = player.object[0] -- gt; blinkshot monitor this player is currently attached to
 alias hologram_biped                = player.object[1] -- gt; biped this player's hologram is currently disguised as
--- alias ...                        = player.object[2] -- gt; unused
--- alias ...                        = player.object[3] -- gt; unused
+alias spawned_jetpack               = player.object[2] -- gt; last jetpack an equip_zone spawned for this player
+alias tracked_powerup               = player.object[3] -- gt; nearest powerup tracked on this player; no_object next tick = picked up
 
 -- alias ...                        = player.player[0] -- gt; unused
 -- alias ...                        = player.player[1] -- gt; unused
@@ -215,7 +223,7 @@ alias hologram_biped                = player.object[1] -- gt; biped this player'
 alias carrier_cooldown_timer        = player.timer[0] -- ctf; remaining cooldown traits duration after throwing the flag
 alias carry_time_update_interval    = player.timer[1] -- ctf; throttle used to increment carry_time once per second
 alias announce_start_timer          = player.timer[2] -- ctf; countdown before the game start message/incident is shown
--- alias ...                        = player.timer[3] -- gt; unused
+alias jetpack_cooldown              = player.timer[3] -- gt; short cooldown so an equip_zone doesn't spawn one every tick
 
 alias state                         = object.number[0] -- ctf; flag state, see (flag_state) enum
 alias delay                         = object.number[0] -- gt; generic tick counter reused by teleports and blinkshot for timing detach/despawn
@@ -226,7 +234,7 @@ alias is_prepared                   = object.number[1] -- gt; whether this falco
 alias announced_flag_take           = object.number[2] -- ctf; whether the flag-grabbed incident has already been sent for this flag
 alias is_banned                     = object.number[2] -- gt; whether this falcon has been marked for permanent upward ejection
 alias announced_flag_drop           = object.number[3] -- ctf; whether the flag-dropped incident has already been sent for this flag
--- alias ...                        = object.number[4] -- gt; unused
+alias has_powerup                   = object.number[4] -- gt; on a player's biped: picked up a powerup (a new biped starts at 0, so it lasts until death)
 alias is_pusher                     = object.number[5] -- gt; whether this falcon is currently being used by a pusher
 -- alias ...                        = object.number[6] -- gt; unused
 -- alias ...                        = object.number[7] -- gt; unused
@@ -313,6 +321,10 @@ declare player.announce_start_timer         = 5                         -- ctf; 
 declare player.invincible_ticks             = 0                         -- gt; ticks elapsed while carrying the flag under opt_invulnerable_ticks
 declare player.engagement_ema               with network priority low   -- gt; smoothed win rate of this player's pusher/defender engagements
 declare player.performance                  with network priority low   -- gt; 0-100 combined performance score used by the MVP system
+declare player.powerup_distance             with network priority local = -1 -- gt; distance to the powerup tracked on this player this tick; -1 = none
+declare player.tracked_powerup              with network priority local -- gt; nearest powerup tracked on this player
+declare player.spawned_jetpack              with network priority low   -- gt; last jetpack an equip_zone spawned for this player
+declare player.jetpack_cooldown                                         -- gt; short cooldown so an equip_zone doesn't spawn one every tick
 
 declare object.state                        with network priority low       -- ctf; flag state, see (flag_state) enum
 -- declare object.number[1]                 with network priority low = 1   -- ctf; unused
@@ -320,6 +332,7 @@ declare object.announced_flag_take          with network priority local     -- c
 declare object.announced_flag_drop          with network priority local     -- ctf; whether the flag-dropped incident has already been sent for this flag
 declare object.zone                         with network priority low       -- ctf; flag zone, boundary centered on flag
 declare object.is_pusher                    with network priority low = 0   -- gt; whether this falcon is currently being used by a pusher
+declare object.has_powerup                  with network priority low       -- gt; on a player's biped: picked up a powerup
 declare object.last_carrier                 with network priority low       -- ctf; last player known to have carried this flag
 -- declare object.return_timer              = 0                             -- ctf; unused
 declare object.falcon_idle_timer            = opt_falcon_despawning         -- gt; ticks a pusher falcon has been idle, used to despawn it
@@ -1649,6 +1662,63 @@ for each player do
 end
 
 --------------------------------------------------------------------------------
+-- EQUIP ZONES:
+-- objects labeled "equip_zone" swap your armor ability for a jetpack.
+--------------------------------------------------------------------------------
+for each player do
+    current_player.jetpack_cooldown.set_rate(-100%)
+
+    -- a second after a swap: if anyone is holding the spawned ability, forget it (it's theirs now);
+    -- if nobody is, it was never picked up, so delete it
+    if current_player.spawned_jetpack != no_object and current_player.jetpack_cooldown.is_zero() then
+        alias owner      = allocate temporary player
+        alias spawn      = allocate temporary object
+        alias spawn_held = allocate temporary number
+        owner      = current_player
+        spawn      = current_player.spawned_jetpack
+        spawn_held = 0
+
+        for each player do
+            alias other_aa = allocate temporary object
+            other_aa = no_object
+            other_aa = current_player.get_armor_ability()
+            if other_aa == spawn then
+                spawn_held = 1
+            end
+        end
+
+        if spawn_held == 0 then
+            spawn.delete()
+        end
+        owner.spawned_jetpack = no_object
+    end
+
+    for each object with label "equip_zone" do
+        current_object.set_shape_visibility(everyone)
+
+        if current_object.shape_contains(current_player.biped) then
+            alias aa      = allocate temporary object
+            alias vehicle = allocate temporary object
+            aa      = no_object
+            aa      = current_player.get_armor_ability()
+            vehicle = no_object
+            vehicle = current_player.get_vehicle()
+
+            -- only swap when on foot, not mid-use, and the last spawned one has had time to be picked up
+            if  vehicle == no_object
+                and not aa.is_in_use()
+                and not aa.is_of_type(jetpack)
+                and current_player.jetpack_cooldown.is_zero()
+            then
+                aa.delete()
+                current_player.spawned_jetpack = current_player.biped.place_at_me(jetpack, none, none, 0, 0, 0, none)
+                current_player.jetpack_cooldown = 1
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
 -- SPECIAL WEAPON TRAITS:
 -- apply limited traits to players holding certain weapons.
 --------------------------------------------------------------------------------
@@ -1665,6 +1735,23 @@ if harlan_version != no_object and harlan_version.spawn_sequence < 2 then
             then
                 current_player.apply_traits(special_weapon_traits)
             end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- WEAK WEAPON TRAITS:
+-- apply buff traits to players holding one of the weakest weapons.
+--------------------------------------------------------------------------------
+if opt_weak_weapon_traits == 1 then
+    for each player do
+        alias c_weapon = allocate temporary object
+        c_weapon = current_player.get_weapon(primary)
+
+        if  c_weapon.is_of_type(shotgun)
+            or c_weapon.is_of_type(concussion_rifle)
+        then
+            current_player.apply_traits(weak_weapon_traits)
         end
     end
 end
@@ -2003,6 +2090,96 @@ if opt_falcon_despawning != 0 then
             if c_falcon.falcon_idle_timer.is_zero() then
                 c_falcon.delete()
             end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- FLAG KILL HEAL:
+-- flag carriers who kill someone have their shields and health refilled.
+--------------------------------------------------------------------------------
+if opt_flag_heal == 1 then
+    for each player do
+        alias killer = global.player[0]
+        alias weapon = global.object[0]
+
+        if current_player.killer_type_is(kill) then
+            killer = no_player
+            killer = current_player.try_get_killer()
+
+            if killer != no_player then
+                weapon = no_object
+                weapon = killer.get_weapon(primary)
+
+                if weapon != no_object and weapon.is_of_type(flag) then
+                    alias killer_shields = allocate temporary number
+                    alias killer_health  = allocate temporary number
+                    killer_shields = killer.biped.shields
+                    killer_health  = killer.biped.health
+
+                    if killer_shields < 100 then
+                        killer.biped.shields = 100
+                    end
+
+                    if killer_health < 100 then
+                        killer.biped.health = 100
+                    end
+                end
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- CUSTOM POWERUP:
+-- picking up a powerup labeled "powerup" applies powerup_traits until death.
+--------------------------------------------------------------------------------
+-- check each player's tracked powerup: if it's gone, they picked it up
+for each player do
+    alias c_biped = allocate temporary object
+    c_biped = current_player.biped
+
+    if current_player.powerup_distance >= 0 then
+        if current_player.tracked_powerup == no_object then
+            c_biped.has_powerup = 1
+        end
+
+        current_player.tracked_powerup  = no_object
+        current_player.powerup_distance = -1
+    end
+
+    -- stored on the biped, so it's gone when they die and respawn
+    if c_biped.has_powerup == 1 then
+        current_player.apply_traits(powerup_traits)
+    end
+end
+
+-- for each powerup, find the closest player and track it on them
+for each object with label "powerup" do
+    alias closest_player = allocate temporary player
+    alias closest_dist   = allocate temporary number
+    closest_player = no_player
+    closest_dist   = 10
+
+    for each player do
+        if current_player.biped != no_object then
+            alias dist = allocate temporary number
+            dist = current_player.biped.get_distance_to(current_object)
+
+            if dist < closest_dist then
+                closest_dist   = dist
+                closest_player = current_player
+            end
+        end
+    end
+
+    -- unless this player already tracks a closer powerup
+    if closest_player != no_player then
+        if  closest_player.powerup_distance < 0
+            or closest_dist < closest_player.powerup_distance
+        then
+            closest_player.tracked_powerup  = current_object
+            closest_player.powerup_distance = closest_dist
         end
     end
 end
